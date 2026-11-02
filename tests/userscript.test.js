@@ -13,7 +13,7 @@ const installUrl =
 test("the source starts with installable userscript metadata", () => {
   const header = source.match(/^\/\/ ==UserScript==\n[\s\S]*?\/\/ ==\/UserScript==/)
   expect(header).not.toBeNull()
-  expect(header[0]).toMatch(/^\/\/ @version\s+0\.1\.1$/m)
+  expect(header[0]).toMatch(/^\/\/ @version\s+0\.2\.0$/m)
   expect(header[0]).toMatch(/^\/\/ @grant\s+none$/m)
   expect(header[0]).toMatch(/^\/\/ @noframes$/m)
   expect(header[0]).toMatch(/^\/\/ @run-at\s+document-idle$/m)
@@ -67,10 +67,19 @@ test("the unbuilt source starts once, handles new posts, and cleans up", async (
       <div><button aria-haspopup="menu" aria-expanded="false">
         <svg title="More"><title>More</title></svg>
       </button></div></div>
+      <div class="actions">
+        <div><button><svg title="Like"></svg></button></div>
+        <div><button><svg title="Comment"></svg></button></div>
+        <div><button><svg title="Repost"></svg></button></div>
+        <div class="share"><button><svg title="Share"></svg></button></div>
+      </div>
     `
     dom.window.document.body.append(post)
     await new Promise((resolve) => dom.window.setTimeout(resolve, 100))
     expect(post.querySelectorAll("button.threads-saved-button")).toHaveLength(1)
+    expect(post.querySelector("button.threads-saved-button").previousElementSibling).toBe(
+      post.querySelector(".share"),
+    )
     expect(dom.window.document.querySelectorAll("#threads-saved-button-style")).toHaveLength(1)
     cleanup()
     expect(post.querySelectorAll("button.threads-saved-button")).toHaveLength(0)

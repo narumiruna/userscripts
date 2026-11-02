@@ -25,11 +25,33 @@ function addPost(id = "first", icon = '<svg title="More"><title>More</title></sv
         </div>
       </div></div>
     </div>
+    <div class="post-actions" style="display: flex; align-items: center">
+      <div><button type="button"><svg title="Like"></svg><span>100</span></button></div>
+      <div><button type="button"><svg title="Comment"></svg><span>20</span></button></div>
+      <div><button type="button"><svg title="Repost"></svg><span>3</span></button></div>
+      <div class="share-action"><button type="button"><svg title="Share"></svg><span>641</span></button></div>
+    </div>
   `
   document.body.append(post)
   const trigger = post.querySelector('[aria-haspopup="menu"]')
   if (!(trigger instanceof HTMLElement)) throw new Error("Expected a native menu trigger")
   return { post, trigger }
+}
+
+function setPagePosts(posts) {
+  const script = document.createElement("script")
+  script.type = "application/json"
+  script.textContent = JSON.stringify({ require: [{ __bbox: { result: { data: { posts } } } }] })
+  document.head.append(script)
+  return script
+}
+
+function expectSaved(post, saved) {
+  const button = injected(post)
+  expect(button.dataset.saved).toBe(saved === undefined ? "unknown" : String(saved))
+  expect(button.querySelector("path").getAttribute("fill")).toBe(saved ? "currentColor" : "none")
+  expect(button.getAttribute("aria-pressed")).toBe(saved === undefined ? null : String(saved))
+  expect(button.querySelector("path").hasAttribute("stroke-dasharray")).toBe(saved === undefined)
 }
 
 function showMenu(trigger, label = "Save", controlled = true) {
@@ -96,8 +118,11 @@ test.each([
   stop = startThreadsSavedButton()
   const button = injected(post)
 
-  expect(button.title).toBe("Save / unsave")
-  expect(button.getAttribute("aria-label")).toBe("Save / unsave")
+  expect(button.title).toBe("Save / unsave (state unavailable)")
+  expect(button.getAttribute("aria-label")).toBe("Save / unsave (state unavailable)")
+  expect(button.previousElementSibling).toBe(post.querySelector(".share-action"))
+  expect(button.parentElement).toBe(post.querySelector(".post-actions"))
+  expect(post.firstElementChild.contains(button)).toBe(false)
   expect(button.type).toBe("button")
   expect(button.contains(trigger)).toBe(false)
   expect(trigger.contains(button)).toBe(false)
@@ -172,8 +197,9 @@ test.each(["Save", "Unsave", "Remove from saved", "儲存", "取消儲存", "保
     expect(action?.click).toHaveBeenCalledOnce()
     expect(button.disabled).toBe(false)
     expect(button.hasAttribute("aria-busy")).toBe(false)
-    expect(button.hasAttribute("aria-pressed")).toBe(false)
-    expect(button.title).toBe("Save / unsave")
+    const nextSaved = !["Unsave", "Remove from saved", "取消儲存", "取消保存"].includes(label)
+    expectSaved(post, nextSaved)
+    expect(button.title).toBe(nextSaved ? "Unsave" : "Save")
     expect(document.getElementById("threads-saved-button-status")?.textContent).toContain(
       "Threads action requested:",
     )
@@ -438,6 +464,219 @@ test("times out safely when Threads does not open a save menu", async () => {
   expect(document.getElementById("threads-saved-button-status")?.textContent).toContain(
     "Check the native post menu or sign in.",
   )
+})
+
+test.each([true, false])("initializes saved state %s from Threads page data", (saved) => {
+  setPagePosts([{ code: "first", has_viewer_saved: saved }])
+  const { post } = addPost()
+  stop = startThreadsSavedButton()
+  expectSaved(post, saved)
+})
+
+test.each([null, undefined, "true", 0])(
+  "does not treat unavailable flag %s as unsaved",
+  (saved) => {
+    setPagePosts([{ code: "first", has_viewer_saved: saved }])
+    const { post } = addPost()
+    stop = startThreadsSavedButton()
+    expectSaved(post, undefined)
+  },
+)
+
+test("does not read saved flags from a post caption or a different post", () => {
+  setPagePosts([
+    { code: "different", has_viewer_saved: true },
+    { code: "first", caption: JSON.stringify({ code: "first", has_viewer_saved: true }) },
+  ])
+  const { post } = addPost()
+  stop = startThreadsSavedButton()
+  expectSaved(post, undefined)
+})
+
+test("handles malformed and subsequently updated page data", async () => {
+  const data = document.createElement("script")
+  data.type = "application/json"
+  data.textContent = '{"has_viewer_saved":'
+  document.head.append(data)
+  const { post } = addPost()
+  stop = startThreadsSavedButton()
+  expectSaved(post, undefined)
+
+  data.textContent = JSON.stringify({ data: { code: "first", has_viewer_saved: true } })
+  await tick()
+  expectSaved(post, true)
+
+  data.firstChild.data = JSON.stringify({ data: { code: "first", has_viewer_saved: false } })
+  await tick()
+  expectSaved(post, false)
+})
+
+test("applies data that arrives after a post and restores state after action-row replacement", async () => {
+  const { post } = addPost()
+  stop = startThreadsSavedButton()
+  expectSaved(post, undefined)
+  setPagePosts([{ code: "first", has_viewer_saved: true }])
+  await tick()
+  expectSaved(post, true)
+
+  const row = post.querySelector(".post-actions")
+  const replacement = row.cloneNode(true)
+  replacement.querySelector(BUTTON).remove()
+  row.replaceWith(replacement)
+  await tick()
+  expect(post.querySelectorAll(BUTTON)).toHaveLength(1)
+  expectSaved(post, true)
+})
+
+test("updates duplicate copies of the same saved post without changing other posts", async () => {
+  const first = addPost()
+  const duplicate = addPost()
+  const other = addPost("other")
+  first.trigger.addEventListener("click", () => showMenu(first.trigger))
+  stop = startThreadsSavedButton()
+
+  injected(first.post).click()
+  await tick()
+  expectSaved(first.post, true)
+  expectSaved(duplicate.post, true)
+  expectSaved(other.post, undefined)
+  for (const { post } of [first, duplicate, other]) {
+    expect(injected(post).previousElementSibling).toBe(post.querySelector(".share-action"))
+  }
+})
+
+test("does not restore a stale page snapshot after a toggle, but accepts new page data", async () => {
+  setPagePosts([{ code: "first", has_viewer_saved: false }])
+  const { post, trigger } = addPost()
+  trigger.addEventListener("click", () => showMenu(trigger))
+  stop = startThreadsSavedButton()
+  injected(post).click()
+  await tick()
+  expectSaved(post, true)
+
+  document.body.append(document.createElement("div"))
+  await tick()
+  expectSaved(post, true)
+
+  setPagePosts([{ code: "first", has_viewer_saved: false }])
+  await tick()
+  expectSaved(post, false)
+})
+
+test("reads the state when the native menu is opened and tracks native unsave", async () => {
+  const { post, trigger } = addPost()
+  let action
+  trigger.addEventListener("click", () => {
+    action = showMenu(trigger, "Unsave")
+  })
+  stop = startThreadsSavedButton()
+  trigger.click()
+  await tick()
+  expectSaved(post, true)
+
+  action.item.click()
+  await tick()
+  expectSaved(post, false)
+})
+
+test("corrects optimistic state if the native menu later reports a failed save", async () => {
+  const { post, trigger } = addPost()
+  trigger.addEventListener("click", () => showMenu(trigger, "Save"))
+  stop = startThreadsSavedButton()
+  injected(post).click()
+  await tick()
+  expectSaved(post, true)
+
+  trigger.click()
+  await tick()
+  expectSaved(post, false)
+})
+
+test("does not reuse another post's saved state when a DOM node is recycled", async () => {
+  setPagePosts([
+    { code: "first", has_viewer_saved: true },
+    { code: "second", has_viewer_saved: false },
+  ])
+  const { post } = addPost()
+  stop = startThreadsSavedButton()
+  expectSaved(post, true)
+
+  post.querySelector("a").href = "/@example/post/second"
+  await tick()
+  expectSaved(post, false)
+
+  post.querySelector("a").href = "/@example/post/unknown"
+  await tick()
+  expectSaved(post, undefined)
+})
+
+test("does not dispatch a pending action after its post identity changes", async () => {
+  const { post, trigger } = addPost()
+  let action
+  trigger.addEventListener("click", () => {
+    window.setTimeout(() => {
+      action = showMenu(trigger)
+    }, 100)
+  })
+  stop = startThreadsSavedButton()
+  injected(post).click()
+  post.querySelector("a").href = "/@example/post/recycled"
+  await tick(200)
+  expect(action.click).not.toHaveBeenCalled()
+  expectSaved(post, undefined)
+})
+
+test("clears observed state across client-side navigation", async () => {
+  setPagePosts([{ code: "first", has_viewer_saved: true }])
+  const { post } = addPost()
+  stop = startThreadsSavedButton()
+  expectSaved(post, true)
+  history.pushState(null, "", "/@another-view")
+  document.body.append(document.createElement("div"))
+  await tick()
+  expectSaved(post, undefined)
+})
+
+test("waits for the action row instead of falling back to the header", async () => {
+  const { post } = addPost()
+  const row = post.querySelector(".post-actions")
+  row.remove()
+  stop = startThreadsSavedButton()
+  expect(post.querySelector(BUTTON)).toBeNull()
+
+  post.append(row)
+  await tick()
+  expect(injected(post).parentElement).toBe(row)
+})
+
+test("supports translated Share icon labels and wrappers", () => {
+  const { post } = addPost()
+  post.querySelector(".share-action svg").setAttribute("title", "分享")
+  stop = startThreadsSavedButton()
+  expect(injected(post).previousElementSibling).toBe(post.querySelector(".share-action"))
+})
+
+test("does not put an outer post's shortcut beside a quoted post's Share control", () => {
+  const outer = addPost("outer")
+  const quoted = addPost("quoted")
+  outer.post.insertBefore(quoted.post, outer.post.querySelector(".post-actions"))
+  stop = startThreadsSavedButton()
+  expect(outer.post.querySelector(":scope > .post-actions").querySelector(BUTTON)).toBeNull()
+  expect(injected(quoted.post).parentElement).toBe(quoted.post.querySelector(".post-actions"))
+})
+
+test("does not probe menus, fetch APIs, or persist state while reading page flags", () => {
+  setPagePosts([{ code: "first", has_viewer_saved: true }])
+  const { post, trigger } = addPost()
+  const click = vi.fn()
+  trigger.addEventListener("click", click)
+  const fetch = vi.spyOn(globalThis, "fetch")
+  const storage = vi.spyOn(Storage.prototype, "setItem")
+  stop = startThreadsSavedButton()
+  expectSaved(post, true)
+  expect(click).not.toHaveBeenCalled()
+  expect(fetch).not.toHaveBeenCalled()
+  expect(storage).not.toHaveBeenCalled()
 })
 
 test("removes injected UI, timers, and pending actions on cleanup", async () => {

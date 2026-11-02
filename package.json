@@ -6,7 +6,8 @@
     "url": "git+https://github.com/narumiruna/typescript-template.git"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:userscripts",
+    "build:userscripts": "node scripts/build-userscripts.mjs",
     "start": "node dist/index.js",
     "check": "biome ci .",
     "test": "vitest run",
@@ -18,7 +19,9 @@
   "devDependencies": {
     "@biomejs/biome": "^2.6.2",
     "@changesets/cli": "^3.0.3",
+    "esbuild": "^0.28.2",
     "husky": "^9.1.7",
+    "jsdom": "^30.1.3",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }

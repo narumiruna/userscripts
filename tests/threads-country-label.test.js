@@ -154,16 +154,24 @@ function expectUnknown(post) {
   expect(label(post).getAttribute("aria-label")).toMatch(/account location.*unavailable/i)
 }
 
-function expectCountry(post, name = "United States", flag = "🇺🇸") {
+function expectCountry(post, name = "United States", flag = "US") {
   const value = label(post)
   expect(value.title).toBe(TOOLTIP)
   expect(value.getAttribute("aria-label")).toContain(`account location: ${name}`)
   expect(value.getAttribute("aria-label")).toMatch(/not nationality/i)
   expect([...value.children].some((node) => node.textContent === name)).toBe(true)
   const decorative = value.querySelector('[aria-hidden="true"]')
-  if (flag) expect(decorative?.textContent).toBe(flag)
-  else expect(decorative).toBeNull()
-  expect(value.querySelector("img, svg, a, button")).toBeNull()
+  if (flag) {
+    expect(decorative?.localName).toBe("svg")
+    expect(decorative?.namespaceURI).toBe("http://www.w3.org/2000/svg")
+    expect(decorative?.getAttribute("data-country")).toBe(flag)
+    expect(decorative?.getAttribute("focusable")).toBe("false")
+    expect(decorative?.getAttribute("width")).toBe("18")
+    expect(decorative?.getAttribute("height")).toBe("12")
+    expect(decorative?.querySelector("path, circle, ellipse")).not.toBeNull()
+    expect(decorative?.textContent).toBe("")
+  } else expect(decorative).toBeNull()
+  expect(value.querySelector("img, a, button")).toBeNull()
 }
 
 function expectSpaced() {
@@ -221,7 +229,7 @@ test("has installable metadata and exact source installation URLs", () => {
   expect(header).not.toBeNull()
   for (const [key, value] of [
     ["name", "Threads Country Label"],
-    ["version", "0.1.0"],
+    ["version", "0.1.1"],
     ["grant", "none"],
     ["run-at", "document-idle"],
     ["license", "AGPL-3.0-only"],
@@ -279,6 +287,119 @@ test.each([
     expect(document.querySelectorAll(LABEL)).toHaveLength(1)
   },
 )
+
+test("bundles complete, licensed SVG artwork without active content or external references", () => {
+  const literal = source.match(/const FLAG_SVGS = (\{[\s\S]*?\n {2}\})\n/)
+  expect(literal).not.toBeNull()
+  const flags = new Script(`(${literal[1]})`).runInNewContext()
+  const entries = Object.entries(flags)
+  expect(entries).toHaveLength(249)
+  expect(source).toContain("country-flag-icons 1.6.20")
+  expect(source).toContain("Copyright (c) 2020 @catamphetamine")
+  expect(source).toContain("included in all copies or substantial portions of the Software")
+  const tags = new Set(["svg", "g", "path", "circle", "ellipse"])
+  const attributes = new Set([
+    "xmlns",
+    "viewBox",
+    "fill",
+    "fill-rule",
+    "clip-rule",
+    "d",
+    "cx",
+    "cy",
+    "r",
+    "rx",
+    "ry",
+    "stroke",
+    "stroke-width",
+    "stroke-linejoin",
+    "stroke-miterlimit",
+    "opacity",
+  ])
+  const parser = new DOMParser()
+  for (const [code, text] of entries) {
+    expect(code).toMatch(/^[A-Z]{2}$/)
+    const parsed = parser.parseFromString(text, "image/svg+xml")
+    const root = parsed.documentElement
+    expect(root.localName, code).toBe("svg")
+    expect(root.namespaceURI, code).toBe("http://www.w3.org/2000/svg")
+    expect(parsed.querySelector("parsererror"), code).toBeNull()
+    expect(parsed.doctype, code).toBeNull()
+    expect(root.textContent, code).toBe("")
+    const viewBox = root.getAttribute("viewBox").split(/\s+/).map(Number)
+    expect(viewBox, code).toHaveLength(4)
+    expect(viewBox.every(Number.isFinite), code).toBe(true)
+    expect(viewBox[2], code).toBeGreaterThan(0)
+    expect(viewBox[3], code).toBeGreaterThan(0)
+    expect(root.querySelector("path, circle, ellipse"), code).not.toBeNull()
+    for (const node of [root, ...root.querySelectorAll("*")]) {
+      expect(tags.has(node.localName), `${code}: ${node.localName}`).toBe(true)
+      expect(node.namespaceURI, code).toBe("http://www.w3.org/2000/svg")
+      for (const attribute of node.attributes) {
+        expect(attributes.has(attribute.name), `${code}: ${attribute.name}`).toBe(true)
+        expect(attribute.value, code).not.toMatch(/url\(|javascript:|data:/i)
+      }
+    }
+  }
+})
+
+test.each([
+  ["Taiwan", "Taiwan", "TW"],
+  ["台灣", "Taiwan", "TW"],
+  ["Japan", "Japan", "JP"],
+  ["United Kingdom", "United Kingdom", "GB"],
+  ["Nepal", "Nepal", "NP"],
+])(
+  "renders the %s location as an embedded SVG and readable country text",
+  async (value, name, code) => {
+    respond.mockResolvedValue(
+      response(
+        countryVariant((states) => {
+          states[1].data.initial = value
+        }),
+      ),
+    )
+    const post = addPost()
+    start()
+    await reveal(post)
+    expectCountry(post, name, code)
+    expect(label(post).textContent).toBe(name)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(starts[0].url.origin).toBe(location.origin)
+  },
+)
+
+test("renders Taiwan artwork without regional-indicator letters or an emoji font", async () => {
+  respond.mockResolvedValue(
+    response(
+      countryVariant((states) => {
+        states[1].data.initial = "Taiwan"
+      }),
+    ),
+  )
+  const post = addPost()
+  post.style.fontFamily = "Arial, sans-serif"
+  start()
+  await reveal(post)
+  expectCountry(post, "Taiwan", "TW")
+  const flag = label(post).querySelector("svg")
+  expect(flag.querySelector('[fill="#D80027"]')).not.toBeNull()
+  expect(flag.querySelector('[fill="#0052B4"]')).not.toBeNull()
+  expect(label(post).textContent).toBe("Taiwan")
+  expect(label(post).textContent).not.toMatch(/\p{Regional_Indicator}/u)
+  expect(document.querySelectorAll('img[src], link[rel="stylesheet"]')).toHaveLength(0)
+})
+
+test("keeps official text without inventing a flag when Intl.DisplayNames is unavailable", async () => {
+  vi.spyOn(Intl, "DisplayNames").mockImplementation(() => {
+    throw new Error("Unavailable")
+  })
+  const post = addPost()
+  start()
+  await reveal(post)
+  expectCountry(post, "United States", null)
+  expect(label(post).textContent).toBe("United States")
+})
 
 test("uses only the verified native same-origin request and invented page credentials", async () => {
   const post = addPost()

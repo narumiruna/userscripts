@@ -466,6 +466,106 @@ test("times out safely when Threads does not open a save menu", async () => {
   )
 })
 
+test("finds the action row when the timestamp is in the post footer", () => {
+  const { post } = addPost()
+  const footer = document.createElement("footer")
+  footer.append(post.querySelector("a"))
+  post.append(footer)
+  stop = startThreadsSavedButton()
+  expect(injected(post).previousElementSibling).toBe(post.querySelector(".share-action"))
+})
+
+test("keeps a detail post with a footer timestamp separate from its replies", async () => {
+  history.replaceState(null, "", "/@example/post/detail")
+  setPagePosts([
+    { code: "detail", has_viewer_saved: true },
+    { code: "reply", has_viewer_saved: false },
+  ])
+  const detail = addPost("detail")
+  const reply = addPost("reply")
+  const footer = document.createElement("footer")
+  footer.append(detail.post.querySelector("a"))
+  detail.post.append(footer)
+  const detailMenu = vi.fn(() => showMenu(detail.trigger, "Unsave"))
+  const replyMenu = vi.fn(() => showMenu(reply.trigger, "Save"))
+  detail.trigger.addEventListener("click", detailMenu)
+  reply.trigger.addEventListener("click", replyMenu)
+  stop = startThreadsSavedButton()
+
+  expectSaved(detail.post, true)
+  expectSaved(reply.post, false)
+  injected(detail.post).click()
+  await tick()
+  expect(detailMenu).toHaveBeenCalledOnce()
+  expect(replyMenu).not.toHaveBeenCalled()
+  expectSaved(detail.post, false)
+  expectSaved(reply.post, false)
+})
+
+test.each(["header", "body"])(
+  "does not mistake an unrelated %s popup for another post",
+  async (where) => {
+    const { post, trigger } = addPost()
+    const popup = document.createElement("button")
+    popup.type = "button"
+    popup.setAttribute("aria-haspopup", "menu")
+    popup.setAttribute("aria-expanded", "false")
+    popup.innerHTML = '<svg aria-label="View edit history"></svg>'
+    const postMenu = vi.fn(() => showMenu(trigger))
+    const unrelatedMenu = vi.fn()
+    trigger.addEventListener("click", postMenu)
+    popup.addEventListener("click", unrelatedMenu)
+    if (where === "header") post.firstElementChild.append(popup)
+    else post.insertBefore(popup, post.querySelector(".post-actions"))
+    stop = startThreadsSavedButton()
+    expect(post.querySelectorAll(BUTTON)).toHaveLength(1)
+    expect(injected(post).previousElementSibling).toBe(post.querySelector(".share-action"))
+    injected(post).click()
+    await tick()
+    expect(postMenu).toHaveBeenCalledOnce()
+    expect(unrelatedMenu).not.toHaveBeenCalled()
+  },
+)
+
+test.each(["trigger", "header", "share"])(
+  "handles extra %s wrappers without an ancestor cutoff",
+  (part) => {
+    const { post, trigger } = addPost()
+    const nodes = {
+      trigger,
+      header: post.firstElementChild,
+      share: post.querySelector(".share-action button"),
+    }
+    let node = nodes[part]
+    for (let index = 0; index < 8; index++) {
+      const wrapper = document.createElement("div")
+      node.replaceWith(wrapper)
+      wrapper.append(node)
+      node = wrapper
+    }
+    stop = startThreadsSavedButton()
+    expect(injected(post).previousElementSibling).toBe(post.querySelector(".share-action"))
+  },
+)
+
+test("does not assign the page URL to a timestamp-less post or its reply", () => {
+  history.replaceState(null, "", "/@example/post/detail")
+  setPagePosts([
+    { code: "detail", has_viewer_saved: true },
+    { code: "reply", has_viewer_saved: false },
+  ])
+  const detail = addPost("detail")
+  const reply = addPost("reply")
+  const link = detail.post.querySelector("a")
+  link.replaceWith(...link.childNodes)
+  const feed = document.createElement("main")
+  feed.append(detail.post, reply.post)
+  document.body.append(feed)
+  stop = startThreadsSavedButton()
+  expect(detail.post.querySelector(BUTTON)).toBeNull()
+  expectSaved(reply.post, false)
+})
+
 test.each([true, false])("initializes saved state %s from Threads page data", (saved) => {
   setPagePosts([{ code: "first", has_viewer_saved: saved }])
   const { post } = addPost()

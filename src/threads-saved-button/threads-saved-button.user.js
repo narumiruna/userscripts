@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Threads Saved Button
 // @namespace    userscripts/threads-saved-button
-// @version      0.2.0
+// @version      0.2.1
 // @description  Add a saved-state bookmark after each Threads post's Share control.
 // @match        https://www.threads.com/*
 // @match        https://threads.com/*
@@ -77,23 +77,33 @@
     return element.matches(':disabled, [aria-disabled="true"]')
   }
 
+  /** @param {Element} root */
+  function postMenus(root) {
+    return [...root.querySelectorAll(TRIGGER_SELECTOR)]
+      .filter((control) => control instanceof HTMLElement)
+      .filter((control) => MORE_LABELS.has(labelOf(control)))
+  }
+
   /**
    * @param {HTMLElement} trigger
    * @returns {HTMLElement | undefined}
    */
-  function postHeader(trigger) {
+  function postScope(trigger) {
     if (!MORE_LABELS.has(labelOf(trigger))) return
     if (trigger.closest('nav, aside, [role="navigation"]')) return
 
-    // Stay near the trigger. Do not mistake a page-level menu for a post menu.
-    let parent = trigger.parentElement
-    for (let depth = 0; parent && depth < 6; depth++, parent = parent.parentElement) {
+    // Stop before the page body and require one post identity and one post menu.
+    for (
+      let parent = trigger.parentElement;
+      parent && parent !== document.body;
+      parent = parent.parentElement
+    ) {
       const links = [...parent.querySelectorAll('a[href*="/post/"]')]
         .filter((link) => link instanceof HTMLAnchorElement)
         .filter((link) => link.querySelector("time"))
       if (links.length === 0) continue
       const posts = new Set(links.map((link) => new URL(link.href).pathname))
-      if (posts.size === 1 && parent.querySelectorAll(TRIGGER_SELECTOR).length === 1) return parent
+      if (posts.size === 1 && postMenus(parent).length === 1) return parent
       return
     }
   }
@@ -103,21 +113,19 @@
    * @returns {{code: string, row: HTMLElement, share: HTMLElement} | undefined}
    */
   function postActions(trigger) {
-    const header = postHeader(trigger)
-    if (!header) return
-    const link = header.querySelector('a[href*="/post/"]:has(time)')
+    const scope = postScope(trigger)
+    if (!scope) return
+    const link = scope.querySelector('a[href*="/post/"]:has(time)')
     if (!(link instanceof HTMLAnchorElement)) return
     const code = new URL(link.href).pathname.match(/\/post\/([^/]+)/)?.[1]
     if (!code) return
 
-    let root = header.parentElement
-    for (
-      let depth = 0;
-      root && root !== document.body && depth < 5;
-      depth++, root = root.parentElement
-    ) {
+    // The timestamp can be in the footer, so this container may already contain the row.
+    /** @type {HTMLElement | null} */
+    let root = scope
+    for (; root && root !== document.body; root = root.parentElement) {
       // Do not attach an outer post's shortcut to a quoted or adjacent post.
-      if (root.querySelectorAll(TRIGGER_SELECTOR).length !== 1) return
+      if (postMenus(root).length !== 1) return
       const shares = [...root.querySelectorAll("svg")]
         .filter((icon) => SHARE_LABELS.has(labelOf(icon)))
         .map((icon) => icon.closest('button, [role="button"]'))
@@ -128,11 +136,7 @@
       if (!share) return
 
       let row = share.parentElement
-      for (
-        let level = 0;
-        row && root.contains(row) && level < 4;
-        level++, row = row.parentElement
-      ) {
+      for (; row && root.contains(row); row = row.parentElement) {
         if (row.contains(trigger)) return
         const controls = [...row.querySelectorAll('button, [role="button"]')].filter(
           (control) => !control.classList.contains(PREFIX) && control.querySelector("svg"),

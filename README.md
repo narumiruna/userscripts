@@ -31,6 +31,8 @@ If you installed the previous generated version, reinstall from the JavaScript s
 
 The script adds a bookmark shortcut immediately after Share in each supported post's action row. It does not put a shortcut in the post header. It supports dynamically loaded posts and page changes. If the script cannot identify an unambiguous action row, it does not attach a button to another post or fall back to the header.
 
+Post detection supports timestamp permalinks in the header or footer and additional DOM wrappers. Unrelated popup menus, such as edit history, are not counted as separate post menus. Detection stops before the page body or at an ambiguous post boundary; it does not assign the current page URL to every reply.
+
 On each click, it opens that post's native menu and selects its current save or unsave action. It does not call private APIs, read account credentials, or use privileged userscript permissions.
 
 The icon shows the state available to the script:
@@ -61,14 +63,16 @@ Only one shortcut operation runs at a time. An existing open menu blocks a new o
 
 Public Threads markup was inspected in isolated Chromium on 2026-11-02. The updated script placed shortcuts after Share in the 1280px desktop layout without overlap or horizontal overflow. The action row has separate native control wrappers, and inline JSON contains post `code` and `has_viewer_saved` fields. The flag is null when logged out; this is not evidence of an unsaved post. The narrow logged-out layout did not expose native post menus, so no shortcuts appeared there.
 
-The JavaScript tests execute the exact installation source. They cover metadata, classic-script syntax, isolated startup, action-row placement, initial and unknown states, native-menu observations, duplicate posts, recycled nodes, dispatch, cancellation, and safe failures. Controlled Chromium fixtures verify placement, solid and outlined icons, and pointer and keyboard dispatch without changing an account's saved posts.
+Public post-detail checks do not reproduce a signed-in layout. Footer-timestamp, extra-popup, and deep-wrapper regression fixtures reproduced a missing main-post shortcut in version 0.2.0; the corrected detection shows the main post and reply shortcuts without mixing their menus.
+
+The JavaScript tests execute the exact installation source. They cover metadata, classic-script syntax, isolated startup, header/footer timestamps, extra wrappers and popups, main-post/reply ownership, action-row placement, initial and unknown states, native-menu observations, duplicate posts, recycled nodes, dispatch, cancellation, and safe failures. Controlled Chromium fixtures verify placement, solid and outlined icons, and pointer and keyboard dispatch without changing an account's saved posts.
 
 An authenticated Threads session and userscript-manager installation are still required to verify account behavior. Before relying on the script, the account owner must:
 1. Install the source script and confirm that the shortcut appears immediately after Share, not in the header.
 2. Check a saved and an unsaved test post. Confirm solid and outlined icons when inline state is available; otherwise open the native menu and confirm that the icon updates.
 3. Save the unsaved post with the shortcut. Confirm a solid icon and `Unsave` in the native menu, then reload and confirm that the post remains saved.
 4. Unsave it with the shortcut. Confirm an outlined icon, check the native menu, and verify that manual native save/unsave actions also update the shortcut.
-5. Check scrolling, client-side navigation, and the account's interface language. If using a narrow layout, also confirm that native post menus and shortcuts appear.
+5. Check scrolling, client-side navigation, post-detail pages, and the account's interface language. If using a narrow layout, also confirm that native post menus and shortcuts appear. If a signed-in detail page still lacks a shortcut, provide a redacted screenshot or DOM sample of its timestamp, More control, and action row.
 
 Authenticated boolean page flags, menu markup, account-state persistence, and manager integration remain unverified until these checks pass. Do not treat the script as live-verified before that check.
 

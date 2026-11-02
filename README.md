@@ -121,6 +121,56 @@ Tests execute the exact installation source and cover metadata, classic-script s
 
 Authenticated account behavior and userscript-manager integration remain unverified. Before relying on the script, the account owner must install it while signed in, save and unsave a test post, and confirm the result in the native menu and after reload. Also check scrolling, post-detail pages, narrow layouts, client-side navigation, and the account's interface language. Do not treat the script as authenticated-live-verified before these checks pass.
 
+## PTT Auto Media
+
+Source and installation file: [`src/ptt-auto-media/ptt-auto-media.user.js`](src/ptt-auto-media/ptt-auto-media.user.js)
+
+Raw installation URL:
+
+```text
+https://raw.githubusercontent.com/narumiruna/userscripts/main/src/ptt-auto-media/ptt-auto-media.user.js
+```
+
+The URL becomes available after the source file is pushed to `main`. Before publication, create a new script in Tampermonkey or Violentmonkey and replace its contents with the source file. No build or npm commands are required.
+
+### Behavior
+
+Open a PTT article to display supported media links inline. The script runs on HTTPS `www.ptt.cc` and `ptt.cc` article paths under `/bbs/*/M.*.html`, but not in frames. It does not accept PTT's age-confirmation form; complete that step yourself when required.
+
+Supported media:
+- Direct images: JPEG, PNG, GIF, WebP, AVIF, and BMP, including query strings.
+- Imgur: single-image page links such as `https://imgur.com/MiX2PsS`, direct images, MP4/WebM, and GIFV links converted to MP4. Albums and gallery pages remain links.
+- Twitter images: `pbs.twimg.com/media/` URLs, including `?format=jpg` and size suffixes.
+- Direct videos: MP4, WebM, OGV, and M4V. Playback depends on the browser's codec support.
+- YouTube: watch, short-link, Shorts, live, and embed URLs with a video ID. Channel and playlist links remain links. New embeds use `youtube-nocookie.com`.
+
+Original links remain available. Existing PTT images and players are reused rather than duplicated, including native embeds after push comments. New comment previews appear after the complete push row, so the author and timestamp remain on their original line. Repeated links in separate comments can each have a preview.
+
+Images load lazily. New video elements show native controls, request metadata, and do not autoplay or loop. Animated GIFs use the browser's normal image animation. Media sizes fit the article width; images and direct videos also fit within 85% of the viewport height.
+
+The script handles added or changed links and replaced article content. Failed generated previews show an error and an original-link fallback. Removed files, host restrictions, unsupported codecs, or YouTube embedding restrictions can still prevent display or playback. An iframe load event does not confirm video playback.
+
+The script does not scrape linked pages, call private APIs, use privileged userscript permissions, or store state. Loading media contacts its host under the browser's cookie and network rules. New images omit the Referer header; new YouTube frames send only the page origin because YouTube requires a Referer. HTTP media URLs are upgraded to HTTPS. Non-HTTP(S), credential-bearing, localhost, single-label, and literal-IP URLs are not embedded.
+
+### Validation status
+
+All four supplied article URLs returned HTML over HTTP requests on 2026-11-02. Live Chromium navigation required PTT's age-confirmation form, which was not accepted. Browser tests therefore used local HTML snapshots from those exact URLs, with the original base URL and native media retained and page scripts removed.
+
+| Article                                                                     | New previews | Images decoded in Chromium | Existing YouTube players |
+| --------------------------------------------------------------------------- | -----------: | -------------------------: | -----------------------: |
+| [M.1671615390.A.16F](https://www.ptt.cc/bbs/Beauty/M.1671615390.A.16F.html) |            0 |                      6 / 6 |                        0 |
+| [M.1763884187.A.A75](https://www.ptt.cc/bbs/Beauty/M.1763884187.A.A75.html) |           13 |                    13 / 13 |                        0 |
+| [M.1767883809.A.A3D](https://www.ptt.cc/bbs/Beauty/M.1767883809.A.A3D.html) |            7 |                    14 / 14 |                        1 |
+| [M.1793540689.A.F4E](https://www.ptt.cc/bbs/Beauty/M.1793540689.A.F4E.html) |           11 |                    11 / 11 |                        0 |
+
+All 44 images decoded at both 1280px desktop and 390px mobile viewports. No checked image or player extended beyond the article width. The third article's native comment image and YouTube player were not duplicated.
+
+Controlled Chromium checks also verified that a direct MP4 remained paused until playback was requested, then advanced its playback time. A generated YouTube player loaded the supplied video's title and Play control with the origin-only referrer policy. These checks do not establish live PTT playback or userscript-manager integration.
+
+The tests execute the exact installation source. Sanitized fixtures retain only source URLs, push placement, and native media URLs from the four articles. Tests cover URL conversion, metadata, native embed reuse, comment placement, lazy images, video controls, dynamic changes, error handling, and cleanup.
+
+Before relying on the script, install it in a userscript manager, complete PTT's age confirmation yourself if required, and check image display and video playback on the live articles. Live-site manager integration and playback remain unverified until those checks pass.
+
 ## Development
 
 ```sh

@@ -1,9 +1,18 @@
 // @vitest-environment jsdom
+import { Script } from "node:vm"
 import { afterEach, beforeEach, expect, test, vi } from "vitest"
-import { startThreadsSavedButton } from "../src/threads-saved-button/saved-button"
+import source from "../src/threads-saved-button/threads-saved-button.user.js?raw"
+
+const script = new Script(source)
+
+function startThreadsSavedButton() {
+  const cleanup = script.runInThisContext()
+  if (typeof cleanup !== "function") throw new Error("Expected userscript cleanup")
+  return cleanup
+}
 
 const BUTTON = "button.threads-saved-button"
-let stop: () => void
+let stop
 
 function addPost(id = "first", icon = '<svg title="More"><title>More</title></svg>') {
   const post = document.createElement("section")
@@ -18,10 +27,12 @@ function addPost(id = "first", icon = '<svg title="More"><title>More</title></sv
     </div>
   `
   document.body.append(post)
-  return { post, trigger: post.querySelector<HTMLElement>('[aria-haspopup="menu"]') as HTMLElement }
+  const trigger = post.querySelector('[aria-haspopup="menu"]')
+  if (!(trigger instanceof HTMLElement)) throw new Error("Expected a native menu trigger")
+  return { post, trigger }
 }
 
-function showMenu(trigger: HTMLElement, label = "Save", controlled = true) {
+function showMenu(trigger, label = "Save", controlled = true) {
   const menu = document.createElement("div")
   menu.id = "native-post-menu"
   menu.setAttribute("role", "menu")
@@ -41,9 +52,9 @@ function showMenu(trigger: HTMLElement, label = "Save", controlled = true) {
   return { menu, item, click }
 }
 
-function injected(post: HTMLElement): HTMLButtonElement {
-  const button = post.querySelector<HTMLButtonElement>(BUTTON)
-  if (!button) throw new Error("Expected an injected save button")
+function injected(post) {
+  const button = post.querySelector(BUTTON)
+  if (!(button instanceof HTMLButtonElement)) throw new Error("Expected an injected save button")
   return button
 }
 
@@ -58,15 +69,13 @@ beforeEach(() => {
   history.replaceState(null, "", "/")
   stop = () => {}
   // jsdom has no layout. Real visibility is also checked in the Chromium smoke test.
-  vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    for (let parent: HTMLElement | null = this; parent; parent = parent.parentElement) {
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function () {
+    for (let parent = this; parent; parent = parent.parentElement) {
       if (parent.hidden || getComputedStyle(parent).display === "none") {
-        return [] as unknown as DOMRectList
+        return []
       }
     }
-    return [new DOMRect(0, 0, 24, 24)] as unknown as DOMRectList
+    return [new DOMRect(0, 0, 24, 24)]
   })
 })
 
@@ -149,7 +158,7 @@ test.each(["Save", "Unsave", "Remove from saved", "儲存", "取消儲存", "保
   "dispatches the exact native %s action without claiming server confirmation",
   async (label) => {
     const { post, trigger } = addPost()
-    let action: ReturnType<typeof showMenu> | undefined
+    let action
     trigger.addEventListener("click", () => {
       action = showMenu(trigger, label)
     })
@@ -173,7 +182,7 @@ test.each(["Save", "Unsave", "Remove from saved", "儲存", "取消儲存", "保
 
 test.each(["button", "role-button"])("supports native %s menu controls", async (kind) => {
   const { post, trigger } = addPost()
-  let click: ReturnType<typeof vi.fn> | undefined
+  let click
   trigger.addEventListener("click", () => {
     const action = showMenu(trigger)
     const item = document.createElement(kind === "button" ? "button" : "div")
@@ -191,7 +200,7 @@ test.each(["button", "role-button"])("supports native %s menu controls", async (
 
 test("reads the native action again after each click and after post-node reuse", async () => {
   const { post, trigger } = addPost()
-  const actions: ReturnType<typeof showMenu>[] = []
+  const actions = []
   trigger.addEventListener("click", () => {
     actions.push(showMenu(trigger, actions.length === 0 ? "Unsave" : "Save"))
   })
@@ -199,7 +208,7 @@ test("reads the native action again after each click and after post-node reuse",
   injected(post).click()
   await tick()
 
-  const link = post.querySelector("a") as HTMLAnchorElement
+  const link = post.querySelector("a")
   link.href = "/@example/post/recycled"
   injected(post).click()
   await tick()
@@ -210,7 +219,7 @@ test("reads the native action again after each click and after post-node reuse",
 
 test("waits for an asynchronously rendered native menu and its label", async () => {
   const { post, trigger } = addPost()
-  let action: ReturnType<typeof showMenu> | undefined
+  let action
   trigger.addEventListener("click", () => {
     window.setTimeout(() => {
       action = showMenu(trigger, "")
@@ -269,7 +278,7 @@ test("ignores hidden stale menus when the trigger has no aria-controls", async (
   const stale = showMenu(document.createElement("div"))
   stale.menu.hidden = true
   const { post, trigger } = addPost()
-  let current: ReturnType<typeof showMenu> | undefined
+  let current
   trigger.addEventListener("click", () => {
     current = showMenu(trigger, "Save", false)
   })
@@ -283,7 +292,7 @@ test("ignores hidden stale menus when the trigger has no aria-controls", async (
 
 test("does not click an unrelated newly opened menu", async () => {
   const { post, trigger } = addPost()
-  let unrelated: ReturnType<typeof showMenu> | undefined
+  let unrelated
   trigger.addEventListener("click", () => {
     trigger.setAttribute("aria-expanded", "true")
     trigger.setAttribute("aria-controls", "expected-menu")
@@ -301,7 +310,7 @@ test.each(["Save image", "Guardar", "Report"])(
   "leaves an unsupported %s action untouched",
   async (label) => {
     const { post, trigger } = addPost()
-    let action: ReturnType<typeof showMenu> | undefined
+    let action
     trigger.addEventListener("click", () => {
       action = showMenu(trigger, label)
     })
@@ -319,7 +328,7 @@ test.each(["Save image", "Guardar", "Report"])(
 
 test("does not click disabled native actions", async () => {
   const { post, trigger } = addPost()
-  let action: ReturnType<typeof showMenu> | undefined
+  let action
   trigger.addEventListener("click", () => {
     action = showMenu(trigger)
     action.item.setAttribute("aria-disabled", "true")
@@ -332,10 +341,10 @@ test("does not click disabled native actions", async () => {
 
 test("does not choose between ambiguous save actions", async () => {
   const { post, trigger } = addPost()
-  let action: ReturnType<typeof showMenu> | undefined
+  let action
   trigger.addEventListener("click", () => {
     action = showMenu(trigger)
-    const other = action.item.cloneNode(true) as HTMLElement
+    const other = action.item.cloneNode(true)
     other.textContent = "Unsave"
     action.menu.append(other)
   })
@@ -347,7 +356,7 @@ test("does not choose between ambiguous save actions", async () => {
 
 test.each(["pointerdown", "keydown"])("cancels pending dispatch on user %s", async (type) => {
   const { post, trigger } = addPost()
-  let action: ReturnType<typeof showMenu> | undefined
+  let action
   trigger.addEventListener("click", () => {
     window.setTimeout(() => {
       action = showMenu(trigger)
@@ -364,7 +373,7 @@ test.each(["pointerdown", "keydown"])("cancels pending dispatch on user %s", asy
 
 test("cancels if the native menu closes before its action loads", async () => {
   const { post, trigger } = addPost()
-  let action: ReturnType<typeof showMenu> | undefined
+  let action
   trigger.addEventListener("click", () => {
     action = showMenu(trigger, "")
   })
@@ -378,7 +387,7 @@ test("cancels if the native menu closes before its action loads", async () => {
 
 test("cancels on a client-side route change", async () => {
   const { post, trigger } = addPost()
-  let action: ReturnType<typeof showMenu> | undefined
+  let action
   trigger.addEventListener("click", () => {
     window.setTimeout(() => {
       action = showMenu(trigger)
@@ -393,7 +402,7 @@ test("cancels on a client-side route change", async () => {
 
 test("cancels if its post is removed while waiting for a menu", async () => {
   const { post, trigger } = addPost()
-  let action: ReturnType<typeof showMenu> | undefined
+  let action
   trigger.addEventListener("click", () => {
     window.setTimeout(() => {
       action = showMenu(trigger)
@@ -408,7 +417,7 @@ test("cancels if its post is removed while waiting for a menu", async () => {
 
 test("rechecks the native menu immediately before dispatch", async () => {
   const { post, trigger } = addPost()
-  let action: ReturnType<typeof showMenu> | undefined
+  let action
   trigger.addEventListener("click", () => {
     action = showMenu(trigger)
   })

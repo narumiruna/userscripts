@@ -1,0 +1,123 @@
+{
+  "observation": {
+    "date": "2026-11-02",
+    "endpoint": "/async/wbloks/fetch/",
+    "app": "com.bloks.www.text_post_app.about_this_profile_async_action",
+    "notes": "Country states and profile route shape were observed in signed-in native UI. Identifiers are invented. Unavailable and unmapped cases are synthetic schema variants. No authentication values are retained."
+  },
+  "profile": {
+    "initialRouteInfo": {
+      "route": {
+        "canonicalRouteName": "comet.threads.BarcelonaProfileThreadsColumnRoute",
+        "url": "/@example",
+        "params": {
+          "vanity": "@example"
+        },
+        "rootView": {
+          "props": {
+            "user_id": "1001"
+          }
+        }
+      }
+    }
+  },
+  "posts": [
+    {
+      "code": "first",
+      "user": {
+        "username": "example",
+        "pk": "1001",
+        "id": "1001"
+      }
+    },
+    {
+      "code": "second",
+      "user": {
+        "username": "another",
+        "pk": "1002",
+        "id": "1002"
+      }
+    }
+  ],
+  "english": {
+    "__ar": 1,
+    "payload": {
+      "layout": {
+        "bloks_payload": {
+          "data": [
+            {
+              "type": "gs",
+              "data": {
+                "key": "THREADS_ABOUT_THIS_PROFILE:about_this_profile_country_visibility",
+                "mode": "p",
+                "initial": true
+              }
+            },
+            {
+              "type": "gs",
+              "data": {
+                "key": "THREADS_ABOUT_THIS_PROFILE:about_this_profile_country",
+                "mode": "p",
+                "initial": "United States"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "traditionalChinese": {
+    "__ar": 1,
+    "payload": {
+      "layout": {
+        "bloks_payload": {
+          "data": [
+            {
+              "type": "gs",
+              "data": {
+                "key": "THREADS_ABOUT_THIS_PROFILE:about_this_profile_country_visibility",
+                "mode": "p",
+                "initial": true
+              }
+            },
+            {
+              "type": "gs",
+              "data": {
+                "key": "THREADS_ABOUT_THIS_PROFILE:about_this_profile_country",
+                "mode": "p",
+                "initial": "美國"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "unavailable": {
+    "__ar": 1,
+    "payload": {
+      "layout": {
+        "bloks_payload": {
+          "data": [
+            {
+              "type": "gs",
+              "data": {
+                "key": "THREADS_ABOUT_THIS_PROFILE:about_this_profile_country_visibility",
+                "mode": "p",
+                "initial": false
+              }
+            },
+            {
+              "type": "gs",
+              "data": {
+                "key": "THREADS_ABOUT_THIS_PROFILE:about_this_profile_country",
+                "mode": "p",
+                "initial": null
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

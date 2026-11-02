@@ -66,12 +66,12 @@ Both scripts recognize English, Traditional Chinese, and Simplified Chinese menu
 
 ## Threads Country Label
 
-Show a small flag emoji and country name after a post or reply author, outside the native profile link. The value is the account location shared through Threads About This Profile, not nationality, citizenship, or a verified current physical location.
+Show a small inline SVG flag and country name after a post or reply author, outside the native profile link. The value is the account location shared through Threads About This Profile, not nationality, citizenship, or a verified current physical location.
 
 - **Sites:** the same HTTPS Threads hosts as Threads Saved Button. The native data source was verified on `www.threads.com`; other host variants are not independently verified.
 - **Placement:** requires a bare username link before an identifiable post timestamp in a header without body content. Dynamically loaded posts, replies, and post-detail headers are supported. Ambiguous headers, body mentions, navigation, profile headings, search pages, and layouts that require crossing a post's action row are skipped.
 - **Display:** known English and localized country names are normalized with `Intl.DisplayNames`. English, Traditional Chinese, and Simplified Chinese region names are recognized, together with names supported for the page's locale. An unmapped official value remains text without a guessed flag. If `Intl.DisplayNames` is unavailable, official text remains readable.
-- **Flag fallback:** flags are emoji, not downloaded images or fonts. Some Windows browsers show regional letters instead; the country name is always retained. The flag is decorative for screen readers. The tooltip states `Threads 公開的帳號所在地，非國籍`.
+- **Flags:** 3:2 SVG artwork for 249 supported countries and regions is embedded in the userscript. Flags do not use emoji fonts, external images, fonts, or CDN requests, so Windows does not need flag-emoji support. The country name is always retained. Flags are decorative for screen readers and are not focusable. The tooltip states `Threads 公開的帳號所在地，非國籍`.
 - **Unknown:** `所在地未知` means loading, unavailable data, or lookup failure. It does not prove that an author hid their country. No country is inferred from names, biographies, language, or profile flags.
 
 ### Requests and state
@@ -120,12 +120,14 @@ Public Threads and Reddit markup was inspected. PTT browser checks used local ar
 
 The Threads Country Label native source was verified read-only on 2026-11-02 in signed-in English and Traditional Chinese views. Native request target IDs matched the profile data; the country states were `United States` and `美國`. Same-origin profile-route ID lookup was also verified. Sanitized source samples are in `tests/fixtures/threads-country-label.json`; unavailable-country variants are synthetic, not evidence of a live hidden-country check.
 
-Country label checks evaluated the exact installation source in Chromium at 1280 px and 390 px widths, in light and dark themes. Controlled pages covered delayed and unavailable results, long-value wrapping, text fallback without flags, visible-only scheduling, deduplication, request spacing, profile ID fallback, dynamic posts, native class replacement, unchanged profile-link clicks, client-side navigation, cleanup, and coexistence with Threads Saved Button. These checks did not use a userscript manager. Read-only source injection on signed-in profile and post-detail pages also showed labels for native account locations. No saved posts or account settings were changed.
+Country label checks evaluated the exact installation source in Chromium at 1280 px and 390 px widths, in light and dark themes. Controlled pages covered delayed and unavailable results, long-value wrapping, text fallback without flags, visible-only scheduling, deduplication, request spacing, profile ID fallback, dynamic posts, native class replacement, unchanged profile-link clicks, client-side navigation, cleanup, and coexistence with Threads Saved Button. These checks did not use a userscript manager. The initial implementation also displayed native account locations through read-only source injection on signed-in profile and post-detail pages. No saved posts or account settings were changed.
+
+Version 0.1.1 replaces emoji with inline SVG flags. Controlled Chromium checks at the same four size/theme combinations confirmed visible 18 × 12 px SVG artwork with Arial text, no regional-indicator letters, no additional asset requests, and unchanged text fallback and cleanup. All 249 bundled SVGs are checked for valid view boxes, static shapes, and absence of active content, external references, shared IDs, and page CSS classes. This SVG update was not tested through signed-in source injection or a Windows-native userscript manager.
 
 ### Country label external checks
 
 1. **Account owner:** after automated and controlled browser checks pass, install the local source in Tampermonkey or Violentmonkey while signed in. Compare post and reply labels with native About This Profile values; check scrolling, navigation, unavailable countries, and coexistence with Threads Saved Button without changing saved posts. Userscript-manager execution and live unavailable-country behavior remain unverified until this check passes. Do not claim compatibility for those paths before verification. Use local installation until the source file is published on `main`.
-2. **User:** review the controlled captures or local installation for spacing, wrapping, and readable country text on the actual browser and operating system, including systems without flag emoji. This is subjective visual acceptance, not an automated result. Unchecked operating systems and host variants must remain listed as unverified.
+2. **User:** review the controlled captures or local installation for spacing, wrapping, and readable country text on the actual browser and operating system, including native Windows browsers. This is subjective visual acceptance, not an automated result. Native Windows SVG rendering, userscript-manager execution of this version, and unchecked host variants must remain listed as unverified.
 
 To complete live verification of the other scripts:
 
@@ -155,3 +157,5 @@ This repository does not publish an npm package and has no build, start, or npm 
 ## License
 
 [AGPL-3.0-only](LICENSE).
+
+Threads Country Label embeds SVG artwork from [country-flag-icons 1.6.20](https://www.npmjs.com/package/country-flag-icons/v/1.6.20), under the MIT License. The installation source includes the full upstream copyright and permission notice. Upstream CSS classes are removed to prevent page-style collisions.

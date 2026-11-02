@@ -76,6 +76,51 @@ An authenticated Threads session and userscript-manager installation are still r
 
 Authenticated boolean page flags, menu markup, account-state persistence, and manager integration remain unverified until these checks pass. Do not treat the script as live-verified before that check.
 
+## Reddit Saved Button
+
+Source and installation file: [`src/reddit-saved-button/reddit-saved-button.user.js`](src/reddit-saved-button/reddit-saved-button.user.js)
+
+Raw installation URL:
+
+```text
+https://raw.githubusercontent.com/narumiruna/userscripts/main/src/reddit-saved-button/reddit-saved-button.user.js
+```
+
+The URL becomes available after the source file is pushed to `main`. Before publication, create a new script in Tampermonkey or Violentmonkey and replace its contents with the source file. No build or npm commands are required for installation.
+
+### Install and use
+
+1. Install the source script in a userscript manager.
+2. Open or reload Reddit while signed in.
+3. Use the bookmark button immediately after Share in a post's action row to save or unsave that post.
+
+### Behavior
+
+The script supports the current `shreddit-post` layout on `www.reddit.com` and `reddit.com`, including action rows and menus in open Shadow DOM. It handles dynamically loaded posts, replaced action rows, and detected client-side navigation. It does not support `old.reddit.com`, legacy layouts, or comment save controls. It does not run in frames.
+
+Each click opens that post's native overflow menu and selects its current Save or Unsave action. The script does not call private APIs, read account credentials, use privileged userscript permissions, or write to browser storage. It does not open menus automatically to discover saved state.
+
+The bookmark uses the same states as the Threads version:
+- A solid bookmark means saved.
+- An outlined bookmark means unsaved.
+- A dashed outline means the state is unavailable. Its label says `Save / unsave (state unavailable)`, and it has no `aria-pressed` value.
+
+Initial state comes from the native overflow component's Boolean attributes. An `is-post-saved` attribute means saved. Its absence means unsaved only when `is-logged-in` is present; otherwise the state remains unknown. Unchanged attribute snapshots do not overwrite a shortcut's later observed state. Recycled menu nodes do not transfer unchanged flags to a new post; changed flags can establish its state.
+
+Opening the native menu updates the observed state. Native and shortcut save/unsave clicks update all copies of the same post optimistically. A later native-menu observation or changed attributes can correct that state. The icon is not confirmation of a successful server response; check Reddit for login requests and errors. State stays in page memory and is cleared on detected navigation.
+
+Save labels supported: `Save`, `Unsave`, `Remove from saved`, `儲存`, `取消儲存`, `保存`, `取消保存`, `收藏`, and `取消收藏`. Other languages or Reddit markup changes can prevent detection. If the action row or post ownership is ambiguous, no shortcut is added. If the save action is missing, hidden, disabled, or ambiguous, the script leaves the menu unchanged and shows a message. It does not select another action as a fallback.
+
+Only one shortcut operation runs at a time. An existing open menu blocks a new operation. Pointer or keyboard input, navigation, a disconnected or changed post, or a closed native menu cancels a pending operation.
+
+### Validation status
+
+Public Reddit markup was inspected in isolated Chromium on 2026-11-02. The script placed bookmarks after Share on subreddit feeds and post-detail pages at 1280px desktop and 390px mobile viewports. Styles applied inside each post's shadow root, and the checked action rows had no overlap or horizontal overflow. Logged-out menus contained only Award and Report; clicking the shortcut left the state unknown and reported that Save was unavailable. No account save actions were selected.
+
+Tests execute the exact installation source and cover metadata, classic-script startup, Shadow DOM placement and events, native saved flags, native save/unsave dispatch, duplicate posts, recycled nodes, dynamic rendering, cancellation, safe failures, and cleanup. Controlled Chromium fixtures also verified solid and outlined icons and native dispatch through pointer clicks, Enter, and Space without changing an account's saved posts.
+
+Authenticated account behavior and userscript-manager integration remain unverified. Before relying on the script, the account owner must install it while signed in, save and unsave a test post, and confirm the result in the native menu and after reload. Also check scrolling, post-detail pages, narrow layouts, client-side navigation, and the account's interface language. Do not treat the script as authenticated-live-verified before these checks pass.
+
 ## Development
 
 ```sh

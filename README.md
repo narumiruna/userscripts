@@ -1,6 +1,6 @@
 # Userscripts
 
-Browser userscripts for Threads, Reddit, and PTT. Each script is a standalone `.user.js` file: the source is the installation file. No build or npm commands are required to install or run it.
+Browser userscripts for Threads, Reddit, PTT, and YouTube. Each script is a standalone `.user.js` file: the source is the installation file. No build or npm commands are required to install or run it.
 
 ## Install
 
@@ -15,11 +15,13 @@ Browser userscripts for Threads, Reddit, and PTT. Each script is a standalone `.
 | [Threads Country Label](src/threads-country-label/threads-country-label.user.js) | Show public account locations beside Threads post and reply authors.  | [Install][threads-country-install] |
 | [Reddit Saved Button](src/reddit-saved-button/reddit-saved-button.user.js)       | Add a save/unsave button after Share on Reddit posts.                 | [Install][reddit-install]          |
 | [PTT Auto Media](src/ptt-auto-media/ptt-auto-media.user.js)                      | Display linked images and videos inline in PTT articles and comments. | [Install][ptt-install]             |
+| [YouTube Live Rewind](src/youtube-live-rewind/youtube-live-rewind.user.js)       | Enable the native DVR timeline for supported active live streams.     | [Install][youtube-install]         |
 
 [threads-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-saved-button/threads-saved-button.user.js
 [threads-country-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-country-label/threads-country-label.user.js
 [reddit-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/reddit-saved-button/reddit-saved-button.user.js
 [ptt-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/ptt-auto-media/ptt-auto-media.user.js
+[youtube-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/youtube-live-rewind/youtube-live-rewind.user.js
 
 Script names link to their source files. Installation and update URLs use the source files on `main`; those files must be published before the URLs work. For a local or unpublished version, create a script in your manager and replace its contents with the source.
 
@@ -111,6 +113,17 @@ Images load lazily. New videos have native controls and request metadata; they d
 
 The script handles added or changed links and replaced article content. Failed generated previews show an error and an original-link fallback. Removed files, host restrictions, unsupported codecs, or YouTube embedding restrictions can prevent display or playback. An iframe load event does not confirm video playback.
 
+## YouTube Live Rewind
+
+Use YouTube's native draggable DVR timeline on active live streams that disable rewind. The script does not add a separate slider or a rewind-button panel.
+
+- **Site:** HTTPS `www.youtube.com`, using the desktop watch player. The script starts on all paths so navigation from the home page can receive patched player data. Mobile and embedded players are not supported.
+- **Installation:** install the source in a userscript manager and fully reload YouTube. It must run at `document-start` in the page context, before the player reads its configuration. The metadata requests page-context execution for Tampermonkey and Violentmonkey.
+- **Changes:** enable `isLiveDvrEnabled` for active live responses that do not already enable DVR. When an HLS/DASH manifest or direct audio and video URLs are available, disable server-driven playback settings and remove the server-ABR URL so seeks do not return to the live edge. Without a client-side source, keep the transport unchanged. Keep adaptive formats and their DVR limits. Normal videos, finished broadcasts, and already-enabled DVR responses stay unchanged.
+- **Use:** move the pointer over the player and drag its existing timeline. The native controls remain available in fullscreen. Select YouTube's **Live** control to return to the live edge. If playback stalls, reload the page.
+- **Limits:** the native DVR window and available server segments determine how far back playback can go. An enabled timeline does not prove that every earlier segment can load. The script does not record video, create missing segments, or extend the server's retention window. YouTube's internal response format can change.
+- **Removal:** disable the script and reload YouTube to restore the original player setup.
+
 ## Privacy and permissions
 
 All scripts use `@grant none` and `@noframes` and do not write to browser storage. Saved buttons and PTT Auto Media do not call private APIs or read account credentials. Saved buttons use page data and native controls, not direct API requests.
@@ -118,6 +131,8 @@ All scripts use `@grant none` and `@noframes` and do not write to browser storag
 Threads Country Label uses the browser's existing session for same-origin profile and native About This Profile requests. It reads the page-provided `DTSGInitialData` and `LSD` anti-CSRF values only for these requests and reads `WebBloksVersioningID` for the native endpoint version. Authentication values are not logged, cached as results, persisted, or sent to other origins. The script does not export cookies, call third-party country services, collect analytics, or perform account writes.
 
 PTT previews load content from media hosts under the browser's cookie and network rules. New images omit the `Referer` header; new YouTube frames send only the page origin. The script does not scrape linked pages. It upgrades HTTP media URLs to HTTPS and does not embed non-HTTP(S), credential-bearing, localhost, single-label, or literal-IP URLs.
+
+YouTube Live Rewind changes player-response data in page memory. It does not make its own network requests, read credentials, or write to browser storage. YouTube's native player requests the selected media segments under the browser's normal network rules.
 
 ## Validation status
 
@@ -148,6 +163,16 @@ To complete live verification of the other scripts:
 2. On Threads and Reddit, check saved, unsaved, and unknown icons while signed in. Save and unsave a test post with the shortcut, then confirm the result in the native menu and after reload. Check that manual native actions also update the icon.
 3. Check the saved buttons while scrolling, on post-detail pages, in narrow layouts, after client-side navigation, and in your interface language.
 4. On PTT, complete age confirmation yourself if required. Check image display and video playback on live articles.
+
+### YouTube Live Rewind checks
+
+Version 0.1.0 passed 56 focused tests and the full 462-test suite, formatting, lint, and JavaScript types. Tests load the exact installation source and cover initial inline data, parsed navigation responses, direct audio/video fallback without a manifest, missing fallback sources, unchanged normal and native-DVR videos, parser behavior, descriptor ownership, duplicate startup, and cleanup.
+
+On 2026-11-04, the exact source was injected before page load in headless Chromium 156.0.8078.4 at 1280 × 800 px. Public stream `XMUjdlrDVFs` was live with DVR disabled before injection. Native pointer dragging sought roughly one minute back, five minutes back in fullscreen, and to broadcast time zero. Playback time and decoded video frames increased after each seek. The native **Live** control returned to live playback. A separate search-result click preserved the document and verified patched player data, native timeline dragging, and continued playback after in-site navigation. These checks used native controls, not direct playback-position assignments or a replacement timeline.
+
+The originally supplied stream, `vUFuPPevafo`, ended during testing. Its live timeline dragging was not verified. The successful checks on another stream do not prove that every stream or earlier segment is available.
+
+**User check:** after automated checks pass, install the local source through Tampermonkey or Violentmonkey and fully reload an active DVR-disabled stream. Check native dragging, fullscreen, the **Live** control, and navigation to another live video. Expected result: the selected earlier section plays while the broadcast continues. Userscript-manager document-start and page-context execution, signed-in playback, and other browsers remain unverified until checked. Do not claim manager compatibility from source-injection checks alone. Use the local source until it is published on `main`.
 
 ## Development
 

@@ -230,7 +230,7 @@ test("has installable metadata and exact source installation URLs", () => {
   expect(header).not.toBeNull()
   for (const [key, value] of [
     ["name", "Threads Country Label"],
-    ["version", "0.1.1"],
+    ["version", "0.1.2"],
     ["grant", "none"],
     ["run-at", "document-idle"],
     ["license", "AGPL-3.0-only"],

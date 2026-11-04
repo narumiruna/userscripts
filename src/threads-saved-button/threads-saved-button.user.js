@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Threads Saved Button
 // @namespace    userscripts/threads-saved-button
-// @version      0.2.2
+// @version      0.2.3
 // @description  Add a saved-state bookmark after each Threads post's Share control.
 // @match        https://www.threads.com/*
 // @match        https://threads.com/*

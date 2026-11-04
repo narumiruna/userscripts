@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Threads Country Label
 // @namespace    userscripts/threads-country-label
-// @version      0.1.1
+// @version      0.1.2
 // @description  Show publicly shared Threads account locations beside post and reply authors.
 // @match        https://www.threads.com/*
 // @match        https://threads.com/*

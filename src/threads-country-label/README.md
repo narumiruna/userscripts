@@ -18,7 +18,9 @@ The script binds usernames to numeric account IDs from page data. If the ID is m
 
 Only visible authors are scheduled through `IntersectionObserver`. If that browser API is unavailable, labels remain unknown and no lookup is made. Duplicate authors share results. At most one request runs at a time, with at least one second between request starts and a ten-second timeout per request.
 
-Country results remain in page memory for ten minutes. Unavailable results and ordinary failures have a 60-second retry delay. The result and identity maps each hold at most 500 entries. Detected navigation or viewer changes clear page state and cancel pending work. Nothing is written to browser storage or shared across reloads.
+Country results remain in page memory for ten minutes. Unavailable results and ordinary failures have a 60-second retry delay. The result and identity maps each hold at most 500 entries. Identity eviction prefers authors that are not visible or in an active lookup. If profile lookup restores an evicted identity, an unexpired country result is reused without extending its expiry. Detected navigation or viewer changes clear page state and cancel pending work. Nothing is written to browser storage or shared across reloads.
+
+Unchanged JSON scripts reuse extracted authentication context. Request checks compare the current script text, so a viewer change is detected even before the mutation batch runs. Changed author and timestamp structures are reconciled locally. Caption, counter, and generated label updates do not cause full-feed header discovery. Visibility callbacks and lookup results reuse existing author bindings.
 
 Authentication failures, HTTP 429, redirects, native rejection errors, or a detected login challenge suspend network lookups until reload. Resolve the underlying problem before reloading. A suspended lookup does not confirm that a country is hidden. The script does not open native menus automatically or change account settings. Disable or uninstall this script and reload to remove its labels without affecting the saved-button script.
 
@@ -33,6 +35,8 @@ The Threads Country Label native source was verified read-only on 2026-11-02 in 
 Country label checks evaluated the exact installation source in Chromium at 1280 px and 390 px widths, in light and dark themes. Controlled pages covered delayed and unavailable results, long-value wrapping, text fallback without flags, visible-only scheduling, deduplication, request spacing, profile ID fallback, dynamic posts, native class replacement, unchanged profile-link clicks, client-side navigation, cleanup, and coexistence with Threads Saved Button. These checks did not use a userscript manager. The initial implementation also displayed native account locations through read-only source injection on signed-in profile and post-detail pages. No saved posts or account settings were changed.
 
 Version 0.1.1 replaces emoji with inline SVG flags. Controlled Chromium checks at the same four size/theme combinations confirmed visible 18 × 12 px SVG artwork with Arial text, no regional-indicator letters, no additional asset requests, and unchanged text fallback and cleanup. All 249 bundled SVGs are checked for valid view boxes, static shapes, and absence of active content, external references, shared IDs, and page CSS classes. This SVG update was not tested through signed-in source injection or a Windows-native userscript manager.
+
+Performance regression tests execute the exact installation source in jsdom. They check unchanged-JSON parse counts, local header discovery, unrelated and generated UI mutations, incomplete-header recovery, identity eviction, cache expiry, immediate viewer changes, and cleanup. Operation counts do not establish live-browser frame times. These performance changes have not been checked on live Threads or through a userscript manager; the existing live and manager limits still apply.
 
 ## Manual checks
 

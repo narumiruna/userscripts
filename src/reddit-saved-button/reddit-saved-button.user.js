@@ -23,6 +23,10 @@
   const POST = "shreddit-post"
   const MENU = "shreddit-post-overflow-menu"
   const TRIGGER = 'button[aria-haspopup="menu"], [role="button"][aria-haspopup="menu"]'
+  const ROW = '[data-testid="action-row"]'
+  const SHARE = 'slot[name="share-button"], shreddit-post-share-button'
+  const STRUCTURE = `${MENU}, ${ROW}, ${SHARE}, ${TRIGGER}, slot`
+  const VISIBILITY = new Set(["id", "class", "style", "hidden", "aria-hidden", "inert"])
   const SAVE_LABELS = new Set([
     "save",
     "unsave",
@@ -37,7 +41,7 @@
   const UNSAVE_LABELS = new Set(["unsave", "remove from saved", "取消儲存", "取消保存", "取消收藏"])
 
   /** @typedef {{id: string, menu: HTMLElement, trigger: HTMLElement, row: HTMLElement, share: Element}} Layout */
-  /** @typedef {{button: HTMLButtonElement, id: string, menu: HTMLElement, trigger: HTMLElement}} Shortcut */
+  /** @typedef {Layout & {button: HTMLButtonElement}} Shortcut */
 
   /** @param {Element} element */
   function parentOf(element) {
@@ -111,14 +115,12 @@
     if (!(trigger instanceof HTMLElement)) return
 
     const rows = [post, ...(post.shadowRoot ? [post.shadowRoot] : [])]
-      .flatMap((root) => [...root.querySelectorAll('[data-testid="action-row"]')])
+      .flatMap((root) => [...root.querySelectorAll(ROW)])
       .filter((row) => row instanceof HTMLElement && ownerOf(row) === post && isVisible(row))
     if (rows.length !== 1) return
     const row = rows[0]
     if (!(row instanceof HTMLElement) || row.contains(trigger)) return
-    const shares = [
-      ...row.querySelectorAll('slot[name="share-button"], shreddit-post-share-button'),
-    ]
+    const shares = [...row.querySelectorAll(SHARE)]
       .filter((share) => ownerOf(share) === post)
       .filter((share) => !share.parentElement?.closest('slot[name="share-button"]'))
     if (shares.length !== 1) return
@@ -271,10 +273,16 @@
     const snapshots = new WeakMap()
     /** @type {WeakMap<HTMLElement, string>} */
     const menuIds = new WeakMap()
-    /** @type {Map<ShadowRoot, MutationObserver>} */
+    // Keep posts with incomplete layouts so later visibility and definition changes can retry them.
+    /** @type {Map<HTMLElement, Map<ShadowRoot, MutationObserver>>} */
     const observers = new Map()
     /** @type {Map<ShadowRoot, HTMLStyleElement>} */
     const styles = new Map()
+    /** @type {WeakSet<Node>} */
+    const owned = new WeakSet([style, status])
+    /** @type {Set<HTMLElement>} */
+    const dirtyPosts = new Set()
+    let scanAll = true
     let currentUrl = location.href
     let stopped = false
     /** @type {number | undefined} */
@@ -349,8 +357,16 @@
       return shortcut
     }
 
-    function syncOpenMenu() {
-      if (active) return
+    /** @param {Set<HTMLElement>} changed */
+    function syncOpenMenu(changed) {
+      if (
+        active ||
+        ![...changed].some(
+          (post) => buttons.get(post)?.trigger.getAttribute("aria-expanded") === "true",
+        )
+      ) {
+        return
+      }
       const shortcut = openShortcut()
       if (!shortcut) return
       const item = saveItem(shortcut.menu)
@@ -399,9 +415,7 @@
         return
       }
 
-      shortcut.id = layout.id
-      shortcut.menu = layout.menu
-      shortcut.trigger = layout.trigger
+      Object.assign(shortcut, layout)
       renderState(shortcut)
       const { button } = shortcut
       const controller = new AbortController()
@@ -457,10 +471,160 @@
       }, 50)
     }
 
+    function scheduleFullRefresh() {
+      if (stopped) return
+      scanAll = true
+      scheduleRefresh()
+    }
+
+    /** @param {Node} node */
+    function isOwned(node) {
+      for (let current = /** @type {Node | null} */ (node); current; current = current.parentNode) {
+        if (owned.has(current)) return true
+      }
+      return false
+    }
+
+    /** @param {Node} node */
+    function discover(node) {
+      if (node instanceof HTMLElement && node.matches(POST)) {
+        dirtyPosts.add(node)
+        if (node.shadowRoot) discover(node.shadowRoot)
+      }
+      if (!(node instanceof Element || node instanceof Document || node instanceof ShadowRoot))
+        return
+      if (node instanceof Element && !node.firstElementChild) return
+      for (const post of node.querySelectorAll(POST)) {
+        if (!(post instanceof HTMLElement)) continue
+        dirtyPosts.add(post)
+        if (post.shadowRoot) discover(post.shadowRoot)
+      }
+    }
+
+    /** @param {Element} element */
+    function nativeMenuOf(element) {
+      for (
+        let parent = /** @type {Element | null} */ (element);
+        parent;
+        parent = parentOf(parent)
+      ) {
+        if (parent.matches(MENU)) return parent
+        if (parent.matches(POST)) return
+      }
+    }
+
+    /** @param {Node} target */
+    function invalidateStyles(target) {
+      const root = target.getRootNode()
+      const post = root instanceof ShadowRoot ? ownerOf(root.host) : undefined
+      if (post instanceof HTMLElement) dirtyPosts.add(post)
+      else scanAll = true
+    }
+
+    /** @param {MutationRecord[]} records */
+    function handleMutations(records) {
+      if (stopped) return
+      // Even an otherwise irrelevant mutation can be the first signal after pushState.
+      if (currentUrl !== location.href) scanAll = true
+      for (const record of records) {
+        if (isOwned(record.target)) continue
+        const element =
+          record.target instanceof ShadowRoot
+            ? record.target.host
+            : record.target instanceof Element
+              ? record.target
+              : record.target.parentElement
+        if (!element) continue
+        const owner = ownerOf(element)
+        const post = owner instanceof HTMLElement ? owner : undefined
+        const menu = nativeMenuOf(element)
+        const shortcut = post ? buttons.get(post) : undefined
+        const open =
+          menu === shortcut?.menu && shortcut?.trigger.getAttribute("aria-expanded") === "true"
+        if (element.matches('style, link[rel~="stylesheet"]')) {
+          invalidateStyles(record.target)
+          continue
+        }
+        if (record.type === "characterData") {
+          if (post && open) dirtyPosts.add(post)
+          continue
+        }
+        if (record.type === "attributes") {
+          const name = record.attributeName || ""
+          if (name === "rel" && record.oldValue?.split(/\s+/).includes("stylesheet")) {
+            invalidateStyles(record.target)
+          }
+          if (VISIBILITY.has(name)) {
+            discover(element)
+            // Descendant selectors such as :has() can also control row visibility.
+            if (post) dirtyPosts.add(post)
+          } else if (
+            post &&
+            ((["post-id", "is-post-saved", "is-logged-in"].includes(name) &&
+              element.matches(MENU)) ||
+              (name === "source-id" && element.matches("shreddit-post-share-button")) ||
+              (name === "data-testid" &&
+                (element.getAttribute(name) === "action-row" ||
+                  record.oldValue === "action-row")) ||
+              (name === "name" && element.matches("slot")) ||
+              (name === "slot" &&
+                (element.matches(`${POST}, ${ROW}, ${SHARE}`) ||
+                  element.querySelector(`${ROW}, shreddit-post-share-button`))) ||
+              (menu && ["aria-haspopup", "aria-expanded", "open", "role"].includes(name)) ||
+              (open && ["aria-label", "disabled", "aria-disabled"].includes(name)))
+          ) {
+            dirtyPosts.add(post)
+          }
+          continue
+        }
+        if (post && open) dirtyPosts.add(post)
+        for (const node of [...record.addedNodes, ...record.removedNodes]) {
+          if (isOwned(node)) {
+            const root = record.target.getRootNode()
+            if (
+              post &&
+              !node.isConnected &&
+              (node === shortcut?.button ||
+                (root instanceof ShadowRoot && node === styles.get(root)))
+            ) {
+              dirtyPosts.add(post)
+            }
+            continue
+          }
+          if (!(node instanceof Element)) continue
+          discover(node)
+          if (
+            node.matches('style, link[rel~="stylesheet"]') ||
+            node.querySelector('style, link[rel~="stylesheet"]')
+          ) {
+            invalidateStyles(record.target)
+          }
+          if (
+            post &&
+            !node.matches(POST) &&
+            (node.matches(STRUCTURE) || node.querySelector(STRUCTURE))
+          ) {
+            dirtyPosts.add(post)
+          }
+        }
+        if (
+          post &&
+          shortcut &&
+          record.target === shortcut.row &&
+          (shortcut.button.parentElement !== shortcut.row ||
+            shortcut.button.previousElementSibling !== shortcut.share)
+        ) {
+          dirtyPosts.add(post)
+        }
+      }
+      if (scanAll || dirtyPosts.size) scheduleRefresh()
+    }
+
     const options = {
       childList: true,
       subtree: true,
       attributes: true,
+      attributeOldValue: true,
       characterData: true,
       attributeFilter: [
         "id",
@@ -475,13 +639,102 @@
         "is-logged-in",
         "aria-haspopup",
         "aria-expanded",
+        "aria-label",
         "aria-disabled",
         "aria-hidden",
         "hidden",
+        "inert",
         "disabled",
         "open",
         "role",
+        "href",
+        "rel",
+        "media",
       ],
+    }
+
+    /** @param {HTMLElement} post */
+    function reconcile(post) {
+      let watched = observers.get(post)
+      const connected = post.isConnected
+      /** @type {Set<ShadowRoot>} */
+      const roots = new Set()
+      if (connected) {
+        if (!watched) {
+          watched = new Map()
+          observers.set(post, watched)
+        }
+        if (post.shadowRoot) roots.add(post.shadowRoot)
+        for (const menu of post.querySelectorAll(MENU)) {
+          if (ownerOf(menu) === post && menu.shadowRoot) roots.add(menu.shadowRoot)
+        }
+      }
+      for (const [root, observer] of watched || []) {
+        if (roots.has(root)) continue
+        observer.disconnect()
+        watched?.delete(root)
+        styles.get(root)?.remove()
+        styles.delete(root)
+      }
+      for (const root of roots) {
+        if (watched?.has(root)) continue
+        const observer = new MutationObserver(handleMutations)
+        observer.observe(root, options)
+        watched?.set(root, observer)
+      }
+      const layout = connected ? postActions(post) : undefined
+      let shortcut = buttons.get(post)
+      if (!layout) {
+        shortcut?.button.remove()
+        buttons.delete(post)
+        if (!connected) observers.delete(post)
+        return
+      }
+      if (!shortcut) {
+        const button = document.createElement("button")
+        owned.add(button)
+        button.type = "button"
+        button.className = PREFIX
+        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+        icon.setAttribute("viewBox", "0 0 24 24")
+        icon.setAttribute("width", "20")
+        icon.setAttribute("height", "20")
+        icon.setAttribute("aria-hidden", "true")
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path")
+        path.setAttribute("d", "M6 3h12v18l-6-4-6 4V3Z")
+        path.setAttribute("fill", "none")
+        path.setAttribute("stroke", "currentColor")
+        path.setAttribute("stroke-width", "1.8")
+        path.setAttribute("stroke-linejoin", "round")
+        icon.append(path)
+        button.append(icon)
+        const created = { button, ...layout }
+        button.addEventListener("click", (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          void toggle(post, created)
+        })
+        shortcut = created
+        buttons.set(post, shortcut)
+      }
+      Object.assign(shortcut, layout)
+      if (
+        shortcut.button.parentElement !== layout.row ||
+        shortcut.button.previousElementSibling !== layout.share
+      ) {
+        layout.share.after(shortcut.button)
+      }
+      const root = shortcut.button.getRootNode()
+      if (root instanceof ShadowRoot && !styles.get(root)?.isConnected) {
+        const copy = document.createElement("style")
+        owned.add(copy)
+        copy.id = style.id
+        copy.textContent = style.textContent
+        root.append(copy)
+        styles.set(root, copy)
+      }
+      readSavedState(shortcut)
+      renderState(shortcut)
     }
 
     function refresh() {
@@ -489,116 +742,48 @@
         currentUrl = location.href
         active?.abort()
         states.clear()
+        scanAll = true
       }
-      /** @type {Set<ShadowRoot>} */
-      const roots = new Set()
-      for (const [post, shortcut] of buttons) {
-        if (!post.isConnected) {
-          shortcut.button.remove()
-          buttons.delete(post)
-        }
+      if (scanAll) {
+        for (const post of observers.keys()) dirtyPosts.add(post)
+        discover(document)
+        scanAll = false
       }
-      for (const post of document.querySelectorAll(POST)) {
-        if (!(post instanceof HTMLElement)) continue
-        if (post.shadowRoot) roots.add(post.shadowRoot)
-        for (const menu of post.querySelectorAll(MENU)) {
-          if (menu.shadowRoot) roots.add(menu.shadowRoot)
-        }
-        const layout = postActions(post)
-        let shortcut = buttons.get(post)
-        if (!layout) {
-          shortcut?.button.remove()
-          buttons.delete(post)
-          continue
-        }
-        if (!shortcut) {
-          const button = document.createElement("button")
-          button.type = "button"
-          button.className = PREFIX
-          const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg")
-          icon.setAttribute("viewBox", "0 0 24 24")
-          icon.setAttribute("width", "20")
-          icon.setAttribute("height", "20")
-          icon.setAttribute("aria-hidden", "true")
-          const path = document.createElementNS("http://www.w3.org/2000/svg", "path")
-          path.setAttribute("d", "M6 3h12v18l-6-4-6 4V3Z")
-          path.setAttribute("fill", "none")
-          path.setAttribute("stroke", "currentColor")
-          path.setAttribute("stroke-width", "1.8")
-          path.setAttribute("stroke-linejoin", "round")
-          icon.append(path)
-          button.append(icon)
-          const created = { button, id: layout.id, menu: layout.menu, trigger: layout.trigger }
-          button.addEventListener("click", (event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            void toggle(post, created)
-          })
-          shortcut = created
-          buttons.set(post, shortcut)
-        }
-        shortcut.id = layout.id
-        shortcut.menu = layout.menu
-        shortcut.trigger = layout.trigger
-        if (
-          shortcut.button.parentElement !== layout.row ||
-          shortcut.button.previousElementSibling !== layout.share
-        ) {
-          layout.share.after(shortcut.button)
-        }
-        const root = shortcut.button.getRootNode()
-        if (root instanceof ShadowRoot && !styles.get(root)?.isConnected) {
-          const copy = document.createElement("style")
-          copy.id = style.id
-          copy.textContent = style.textContent
-          root.append(copy)
-          styles.set(root, copy)
-        }
-        readSavedState(shortcut)
-        renderState(shortcut)
-      }
-      for (const [root, observer] of observers) {
-        if (!roots.has(root)) {
-          observer.disconnect()
-          observers.delete(root)
-          styles.get(root)?.remove()
-          styles.delete(root)
-        }
-      }
-      for (const root of roots) {
-        if (observers.has(root)) continue
-        const observer = new MutationObserver(scheduleRefresh)
-        observer.observe(root, options)
-        observers.set(root, observer)
-      }
-      syncOpenMenu()
+      const changed = new Set(dirtyPosts)
+      dirtyPosts.clear()
+      for (const post of changed) reconcile(post)
+      syncOpenMenu(changed)
+      if (dirtyPosts.size) scheduleRefresh()
     }
 
     document.addEventListener("click", trackNativeAction, true)
-    window.addEventListener("popstate", scheduleRefresh)
-    window.addEventListener("hashchange", scheduleRefresh)
-    window.addEventListener("afterRoute", scheduleRefresh)
-    window.addEventListener("resize", scheduleRefresh)
-    const observer = new MutationObserver(scheduleRefresh)
+    window.addEventListener("popstate", scheduleFullRefresh)
+    window.addEventListener("hashchange", scheduleFullRefresh)
+    window.addEventListener("afterRoute", scheduleFullRefresh)
+    window.addEventListener("resize", scheduleFullRefresh)
+    const observer = new MutationObserver(handleMutations)
     observer.observe(document.documentElement, options)
     for (const tag of [POST, MENU]) {
-      void customElements.whenDefined(tag).then(scheduleRefresh)
+      void customElements.whenDefined(tag).then(scheduleFullRefresh)
     }
     refresh()
 
     return () => {
       stopped = true
       observer.disconnect()
-      for (const observer of observers.values()) observer.disconnect()
+      for (const watched of observers.values()) {
+        for (const observer of watched.values()) observer.disconnect()
+      }
       observers.clear()
+      dirtyPosts.clear()
       active?.abort()
       window.clearTimeout(refreshTimer)
       window.clearTimeout(statusTimer)
       document.removeEventListener("click", trackNativeAction, true)
-      window.removeEventListener("popstate", scheduleRefresh)
-      window.removeEventListener("hashchange", scheduleRefresh)
-      window.removeEventListener("afterRoute", scheduleRefresh)
-      window.removeEventListener("resize", scheduleRefresh)
+      window.removeEventListener("popstate", scheduleFullRefresh)
+      window.removeEventListener("hashchange", scheduleFullRefresh)
+      window.removeEventListener("afterRoute", scheduleFullRefresh)
+      window.removeEventListener("resize", scheduleFullRefresh)
       for (const shortcut of buttons.values()) shortcut.button.remove()
       for (const copy of styles.values()) copy.remove()
       buttons.clear()

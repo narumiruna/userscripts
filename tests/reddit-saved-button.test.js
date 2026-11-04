@@ -83,6 +83,58 @@ async function tick(ms = 60) {
   await vi.advanceTimersByTimeAsync(ms)
 }
 
+function countOperations(fixtures) {
+  const documentQueries = vi.spyOn(document, "querySelectorAll")
+  const styles = vi.spyOn(globalThis, "getComputedStyle")
+  const posts = fixtures.map(({ post, root, row, menu }) => {
+    // Use a separate mock for each row, not the shared prototype layout substitute.
+    const rects = vi.fn(() => [new DOMRect(0, 0, 320, 32)])
+    row.getClientRects = rects
+    return {
+      queries: [...new Set([post, root, row, menu, menu.shadowRoot].filter(Boolean))].map((node) =>
+        vi.spyOn(node, "querySelectorAll"),
+      ),
+      rects,
+    }
+  })
+  return {
+    documentQueries,
+    styles,
+    posts,
+    clear() {
+      documentQueries.mockClear()
+      styles.mockClear()
+      for (const { queries, rects } of posts) {
+        for (const query of queries) query.mockClear()
+        rects.mockClear()
+      }
+    },
+    expectPostIdle(index) {
+      expect(documentQueries).not.toHaveBeenCalled()
+      const { queries, rects } = posts[index]
+      for (const query of queries) expect(query).not.toHaveBeenCalled()
+      expect(rects).not.toHaveBeenCalled()
+      for (const [element] of styles.mock.calls) {
+        expect(
+          fixtures[index].post.contains(element) || fixtures[index].root.contains(element),
+        ).toBe(false)
+      }
+    },
+    expectIdle() {
+      expect({
+        documentQueries: documentQueries.mock.calls.length,
+        postQueries: posts.reduce(
+          (total, { queries }) =>
+            total + queries.reduce((count, query) => count + query.mock.calls.length, 0),
+          0,
+        ),
+        rowGeometry: posts.reduce((total, { rects }) => total + rects.mock.calls.length, 0),
+        computedStyles: styles.mock.calls.length,
+      }).toEqual({ documentQueries: 0, postQueries: 0, rowGeometry: 0, computedStyles: 0 })
+    },
+  }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   document.head.innerHTML = ""
@@ -693,6 +745,375 @@ test("detects a row that becomes visible after a viewport resize", async () => {
   window.dispatchEvent(new Event("resize"))
   await tick()
   expect(injected(fixture).parentElement).toBe(fixture.row)
+})
+
+test("unrelated mutations do no discovery, post scans, or layout reads on a 100-post feed", async () => {
+  const fixtures = Array.from({ length: 100 }, (_, index) =>
+    addPost(`post${index}`, { shadow: false, shareSlot: false }),
+  )
+  const outside = document.createElement("span")
+  outside.textContent = "Outside counter: 1"
+  document.body.append(outside)
+  const counter = document.createElement("span")
+  counter.textContent = "1"
+  fixtures[0].row.firstElementChild.append(counter)
+  stop = startRedditSavedButton()
+  await tick(180)
+  const operations = countOperations(fixtures)
+  const mutations = [
+    () => {
+      outside.firstChild.data = "Outside counter: 2"
+    },
+    () => {
+      counter.firstChild.data = "2"
+    },
+    () => {
+      counter.textContent = "3"
+    },
+    () => {
+      outside.append(document.createElement("span"))
+    },
+    () => {
+      injected(fixtures[0]).querySelector("path").style.stroke = "blue"
+      document.getElementById("reddit-saved-button-status").textContent = "Status changed"
+    },
+  ]
+  for (const mutate of mutations) {
+    mutate()
+    await tick(180)
+    operations.expectIdle()
+    expect(vi.getTimerCount()).toBe(0)
+  }
+})
+
+test("detects row visibility controlled by a descendant class without scanning other posts", async () => {
+  const fixture = addPost("first", { shadow: false, shareSlot: false })
+  const other = addPost("other", { shadow: false, shareSlot: false })
+  const counter = fixture.row.firstElementChild
+  counter.className = "hide-actions"
+  const style = document.createElement("style")
+  style.textContent =
+    'shreddit-post:has(.hide-actions) [data-testid="action-row"] { display: none; }'
+  document.head.append(style)
+  stop = startRedditSavedButton()
+  await tick(180)
+  expect(fixture.root.querySelector(BUTTON)).toBeNull()
+  const operations = countOperations([fixture, other])
+  counter.className = "visible-counter"
+  await tick(180)
+  expect(injected(fixture).parentElement).toBe(fixture.row)
+  expect(operations.documentQueries).not.toHaveBeenCalled()
+  operations.expectPostIdle(1)
+})
+
+test.each([true, false])(
+  "one-post mutations do not query or read layout in the other 99 posts with shadow=%s",
+  async (shadow) => {
+    const fixtures = Array.from({ length: 100 }, (_, index) =>
+      addPost(`post${index}`, { shadow, shareSlot: shadow }),
+    )
+    stop = startRedditSavedButton()
+    await tick(180)
+    const operations = countOperations(fixtures)
+    const fixture = fixtures[42]
+    const mutations = [
+      () => {
+        const counter = fixture.row.firstElementChild
+        counter.className = "updated-counter"
+        counter.style.color = "red"
+        counter.id = "updated-counter"
+      },
+      () => {
+        fixture.row.className = "updated-action-row"
+      },
+      () => {
+        fixture.menu.setAttribute("is-post-saved", "")
+      },
+      () => {
+        fixture.row
+          .querySelector("shreddit-post-share-button")
+          .setAttribute("source-id", "t3_other")
+      },
+      () => {
+        fixture.row
+          .querySelector("shreddit-post-share-button")
+          .setAttribute("source-id", "t3_post42")
+      },
+      () => {
+        fixture.post.id = "t3_recycled"
+        fixture.menu.setAttribute("post-id", "t3_recycled")
+        fixture.menu.setAttribute("is-logged-in", "")
+        fixture.menu.removeAttribute("is-post-saved")
+        fixture.row
+          .querySelector("shreddit-post-share-button")
+          .setAttribute("source-id", "t3_recycled")
+      },
+    ]
+    for (const mutate of mutations) {
+      mutate()
+      operations.clear()
+      await tick(180)
+      expect(operations.documentQueries).not.toHaveBeenCalled()
+      expect(operations.posts[42].rects).toHaveBeenCalledOnce()
+      expect(operations.styles).toHaveBeenCalledTimes(4)
+      for (const [index, { queries, rects }] of operations.posts.entries()) {
+        if (index === 42) continue
+        for (const query of queries) expect(query).not.toHaveBeenCalled()
+        expect(rects).not.toHaveBeenCalled()
+      }
+    }
+    expectSaved(fixture, false)
+  },
+)
+
+test("ignores counter text and owned mutations inside an observed post shadow root", async () => {
+  const fixture = addPost()
+  const counter = document.createElement("span")
+  counter.textContent = "1"
+  fixture.row.firstElementChild.append(counter)
+  stop = startRedditSavedButton()
+  await tick(180)
+  const operations = countOperations([fixture])
+  counter.firstChild.data = "2"
+  injected(fixture).querySelector("path").setAttribute("class", "updated-icon")
+  await tick(180)
+  operations.expectIdle()
+})
+
+test("discovers and removes posts in local subtrees and disconnects detached shadow roots", async () => {
+  const existing = addPost("existing")
+  stop = startRedditSavedButton()
+  await tick(180)
+  const operations = countOperations([existing])
+  const fixture = addPost("inserted")
+  const wrapper = document.createElement("section")
+  wrapper.append(fixture.post)
+  document.body.append(wrapper)
+  await tick(180)
+  expect(injected(fixture).parentElement).toBe(fixture.row)
+  operations.expectPostIdle(0)
+  wrapper.remove()
+  await tick(180)
+  expect(fixture.root.querySelector(BUTTON)).toBeNull()
+  expect(fixture.root.querySelector(`#${STYLE}`)).toBeNull()
+  operations.expectPostIdle(0)
+  fixture.root.append(document.createElement("div"))
+  fixture.menu.shadowRoot.append(document.createElement("div"))
+  await Promise.resolve()
+  expect(vi.getTimerCount()).toBe(0)
+  document.body.append(wrapper)
+  await tick(180)
+  expect(injected(fixture).parentElement).toBe(fixture.row)
+  operations.expectPostIdle(0)
+})
+
+test("restores externally removed owned UI without an observer feedback loop", async () => {
+  const fixture = addPost()
+  stop = startRedditSavedButton()
+  await tick(180)
+  const operations = countOperations([fixture])
+  injected(fixture).remove()
+  fixture.root.querySelector(`#${STYLE}`).remove()
+  await tick(180)
+  expect(fixture.root.querySelectorAll(BUTTON)).toHaveLength(1)
+  expect(fixture.root.querySelectorAll(`#${STYLE}`)).toHaveLength(1)
+  expect(operations.posts[0].rects).toHaveBeenCalledOnce()
+  operations.clear()
+  await tick(180)
+  operations.expectIdle()
+})
+
+test.each(["class", "style", "hidden", "aria-hidden", "inert"])(
+  "reconciles posts when an ancestor changes visibility through %s",
+  async (attribute) => {
+    const fixture = addPost()
+    const ancestor = document.createElement("section")
+    ancestor.append(fixture.post)
+    document.body.append(ancestor)
+    const style = document.createElement("style")
+    style.textContent = ".hidden-feed { display: none }"
+    document.head.append(style)
+    stop = startRedditSavedButton()
+    if (attribute === "class") ancestor.className = "hidden-feed"
+    else if (attribute === "style") ancestor.style.display = "none"
+    else ancestor.setAttribute(attribute, attribute === "aria-hidden" ? "true" : "")
+    await tick()
+    expect(fixture.root.querySelector(BUTTON)).toBeNull()
+    ancestor.removeAttribute(attribute)
+    await tick()
+    expect(injected(fixture).parentElement).toBe(fixture.row)
+  },
+)
+
+test("rechecks global visibility when page stylesheet text changes", async () => {
+  const fixture = addPost("first", { shadow: false, shareSlot: false })
+  fixture.row.className = "controlled-row"
+  const style = document.createElement("style")
+  style.textContent = ".controlled-row { display: none }"
+  document.head.append(style)
+  stop = startRedditSavedButton()
+  expect(fixture.root.querySelector(BUTTON)).toBeNull()
+  style.textContent = ".controlled-row { display: block }"
+  await tick()
+  expect(injected(fixture).parentElement).toBe(fixture.row)
+})
+
+test("limits shadow stylesheet changes to their owning post", async () => {
+  const fixture = addPost()
+  const other = addPost("other")
+  stop = startRedditSavedButton()
+  await tick(180)
+  const operations = countOperations([fixture, other])
+  const style = document.createElement("style")
+  style.textContent = ":host { color: black }"
+  fixture.root.append(style)
+  await tick(180)
+  expect(operations.posts[0].rects).toHaveBeenCalledOnce()
+  operations.expectPostIdle(1)
+  operations.clear()
+  style.firstChild.data = ":host { color: blue }"
+  await tick(180)
+  expect(operations.posts[0].rects).toHaveBeenCalledOnce()
+  operations.expectPostIdle(1)
+})
+
+test.each(["wrapper", "slot", "assignment"])(
+  "detects composed row visibility changes through a shadow %s",
+  async (kind) => {
+    const fixture = addPost("first", { shadow: false, shareSlot: false })
+    const root = fixture.post.attachShadow({ mode: "open" })
+    root.innerHTML =
+      '<slot></slot><div><slot name="actions"></slot></div><slot name="hidden-actions" hidden></slot>'
+    fixture.row.slot = "actions"
+    const slot = root.querySelector('slot[name="actions"]')
+    stop = startRedditSavedButton()
+    expect(injected(fixture).parentElement).toBe(fixture.row)
+    if (kind === "wrapper") slot.parentElement.style.display = "none"
+    if (kind === "slot") slot.hidden = true
+    if (kind === "assignment") fixture.row.slot = "hidden-actions"
+    await tick()
+    expect(fixture.root.querySelector(BUTTON)).toBeNull()
+    if (kind === "wrapper") slot.parentElement.style.display = ""
+    if (kind === "slot") slot.hidden = false
+    if (kind === "assignment") fixture.row.slot = "actions"
+    await tick()
+    expect(injected(fixture).parentElement).toBe(fixture.row)
+  },
+)
+
+test("rechecks slotted rows after a shadow root rerender without row mutations", async () => {
+  const fixture = addPost("first", { shadow: false, shareSlot: false })
+  const root = fixture.post.attachShadow({ mode: "open" })
+  root.innerHTML = '<slot></slot><slot name="actions"></slot>'
+  fixture.row.slot = "actions"
+  stop = startRedditSavedButton()
+  expect(injected(fixture).parentElement).toBe(fixture.row)
+  root.innerHTML = '<slot></slot><div hidden><slot name="actions"></slot></div>'
+  await tick()
+  expect(fixture.root.querySelector(BUTTON)).toBeNull()
+  root.innerHTML = '<slot></slot><slot name="actions"></slot>'
+  await tick()
+  expect(injected(fixture).parentElement).toBe(fixture.row)
+})
+
+test("detects row visibility changes when a shadow slot is renamed", async () => {
+  const fixture = addPost("first", { shadow: false, shareSlot: false })
+  const root = fixture.post.attachShadow({ mode: "open" })
+  root.innerHTML = '<slot></slot><slot name="other"></slot><slot name="actions" hidden></slot>'
+  fixture.row.slot = "actions"
+  stop = startRedditSavedButton()
+  expect(fixture.root.querySelector(BUTTON)).toBeNull()
+  root.querySelector('slot[name="other"]').name = "actions"
+  await tick()
+  expect(injected(fixture).parentElement).toBe(fixture.row)
+})
+
+test("discovers nested shadow posts and releases their observers when an ancestor is removed", async () => {
+  const outer = addPost("outer")
+  const nested = addPost("nested")
+  outer.root.append(nested.post)
+  stop = startRedditSavedButton()
+  expectSaved(outer, undefined)
+  expectSaved(nested, undefined)
+  outer.post.hidden = true
+  await tick()
+  expect(outer.root.querySelector(BUTTON)).toBeNull()
+  expect(nested.root.querySelector(BUTTON)).toBeNull()
+  outer.post.hidden = false
+  await tick()
+  expectSaved(outer, undefined)
+  expectSaved(nested, undefined)
+  outer.post.remove()
+  await tick()
+  for (const fixture of [outer, nested]) {
+    expect(fixture.root.querySelector(BUTTON)).toBeNull()
+    expect(fixture.root.querySelector(`#${STYLE}`)).toBeNull()
+    fixture.root.append(document.createElement("div"))
+  }
+  await Promise.resolve()
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+test("tracks text and accessible-label changes in a manually opened native shadow menu", async () => {
+  const fixture = addPost()
+  stop = startRedditSavedButton()
+  const action = showMenu(fixture.trigger)
+  await tick()
+  expectSaved(fixture, false)
+  action.item.querySelector("span").firstChild.data = "Unsave"
+  await tick()
+  expectSaved(fixture, true)
+  action.item.setAttribute("aria-label", "Save")
+  await tick()
+  expectSaved(fixture, false)
+})
+
+test.each(["popstate", "hashchange", "resize", "unrelated-mutation"])(
+  "resets saved state after a URL change detected through %s",
+  async (event) => {
+    const fixture = addPost("first", { loggedIn: true, saved: true })
+    const counter = document.createElement("span")
+    counter.textContent = "1"
+    document.body.append(counter)
+    stop = startRedditSavedButton()
+    await tick(180)
+    history.pushState(null, "", "/r/other/#next")
+    if (event === "unrelated-mutation") counter.firstChild.data = "2"
+    else window.dispatchEvent(new Event(event))
+    await tick()
+    expectSaved(fixture, undefined)
+  },
+)
+
+test("detects a late overflow-menu definition without a light-DOM mutation", async () => {
+  const fixture = addPost()
+  const menu = fixture.menu.cloneNode(true)
+  const trigger = menu.querySelector("button")
+  trigger.remove()
+  fixture.menu.replaceWith(menu)
+  stop = startRedditSavedButton()
+  expect(fixture.root.querySelector(BUTTON)).toBeNull()
+  menu.attachShadow({ mode: "open" }).append(trigger)
+  if (!customElements.get("shreddit-post-overflow-menu")) {
+    customElements.define("shreddit-post-overflow-menu", class extends HTMLElement {})
+  }
+  await tick()
+  expect(injected(fixture).parentElement).toBe(fixture.row)
+})
+
+test("ignores delayed definition callbacks after cleanup", async () => {
+  const resolvers = []
+  vi.spyOn(customElements, "whenDefined").mockImplementation(
+    () => new Promise((resolve) => resolvers.push(resolve)),
+  )
+  const fixture = addPost()
+  stop = startRedditSavedButton()
+  stop()
+  for (const resolve of resolvers) resolve(HTMLElement)
+  await tick(180)
+  expect(fixture.root.querySelector(BUTTON)).toBeNull()
+  expect(document.getElementById(STYLE)).toBeNull()
+  expect(vi.getTimerCount()).toBe(0)
 })
 
 test("removes injected UI, shadow styles, observers, and pending timers on cleanup", async () => {

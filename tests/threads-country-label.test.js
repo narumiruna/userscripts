@@ -10,6 +10,7 @@ const savedScript = new Script(savedSource)
 const LABEL = ".threads-country-label"
 const STYLE = "threads-country-label-style"
 const UNKNOWN = "所在地未知"
+const TIMESTAMP = 'a[href*="/post/"]:has(time)'
 const TOOLTIP = "Threads 公開的帳號所在地，非國籍"
 const INSTALL_URL =
   "https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-country-label/threads-country-label.user.js"
@@ -1284,6 +1285,304 @@ test("cleanup aborts a rate-spacing wait and prevents a later fetch", async () =
   await tick(2000)
   expect(fetchMock).toHaveBeenCalledOnce()
   expect(vi.getTimerCount()).toBe(0)
+})
+
+test("reuses unchanged JSON context during request guards and visibility updates", async () => {
+  jsonData({ unrelated: Array.from({ length: 1000 }, (_, index) => ({ index })) })
+  const post = addPost()
+  start()
+  await tick()
+  const payloads = [...document.querySelectorAll('script[type="application/json"]')].map(
+    (node) => node.textContent,
+  )
+  const parse = vi.spyOn(JSON, "parse")
+  await reveal(post)
+  intersect([post], false)
+  await tick()
+  await reveal(post)
+  expectCountry(post)
+  expect(fetchMock).toHaveBeenCalledOnce()
+  expect(parse.mock.calls.filter(([text]) => payloads.includes(text))).toHaveLength(0)
+})
+
+test("detects a viewer change before the observer or DOM batch runs", async () => {
+  const pending = deferred()
+  respond.mockReturnValueOnce(pending.promise)
+  const post = addPost()
+  start()
+  await reveal(post)
+  contextData.textContent = JSON.stringify(modules("900002"))
+  pending.resolve(response())
+  await tick(0)
+  expectUnknown(post)
+})
+
+test("ignores caption, counter, global class, and owned label mutations", async () => {
+  const posts = Array.from({ length: 30 }, (_, index) => addPost("example", `p${index}`))
+  start()
+  await tick()
+  const documentQuery = vi.spyOn(document, "querySelectorAll")
+  const rootQuery = vi.spyOn(document.documentElement, "querySelectorAll")
+  const headerQueries = posts.map((post) =>
+    vi.spyOn(post.querySelector(".author-header"), "querySelectorAll"),
+  )
+  posts[0].querySelector(".body").firstChild.data = "Changed caption"
+  posts[0].querySelector(".post-actions button").append("101")
+  label(posts[0]).firstChild.data = "Owned text update"
+  document.body.className = "theme-updated"
+  await tick(300)
+  for (const query of [documentQuery, rootQuery]) {
+    expect(query.mock.calls.filter(([selector]) => selector === TIMESTAMP)).toHaveLength(0)
+  }
+  for (const query of headerQueries) expect(query).not.toHaveBeenCalled()
+})
+
+test("reconciles a changed author without scanning other headers or the shared feed", async () => {
+  const feed = document.createElement("main")
+  document.body.append(feed)
+  const first = addPost()
+  const second = addPost("another", "second")
+  feed.append(first, second)
+  start()
+  await tick()
+  const globalQueries = [document, document.documentElement, feed].map((root) =>
+    vi.spyOn(root, "querySelectorAll"),
+  )
+  const unrelated = vi.spyOn(second.querySelector(".author-header"), "querySelectorAll")
+  setAuthor(first, "another", "changed")
+  await tick()
+  expectUnknown(first)
+  expect(unrelated).not.toHaveBeenCalled()
+  for (const query of globalQueries) {
+    expect(query.mock.calls.filter(([selector]) => selector === TIMESTAMP)).toHaveLength(0)
+  }
+})
+
+test("visibility and fetched label updates do not rediscover other headers", async () => {
+  const first = addPost()
+  const second = addPost("another", "second")
+  start()
+  await tick()
+  const query = vi.spyOn(second.querySelector(".author-header"), "querySelectorAll")
+  const global = vi.spyOn(document, "querySelectorAll")
+  await reveal(first)
+  expectCountry(first)
+  expect(query).not.toHaveBeenCalled()
+  expect(global.mock.calls.filter(([selector]) => selector === TIMESTAMP)).toHaveLength(0)
+})
+
+test("recovers a missing nested author locally and restores a removed label", async () => {
+  const first = addPost()
+  const link = author(first)
+  const wrapper = document.createElement("span")
+  link.replaceWith(wrapper)
+  const second = addPost("another", "second")
+  start()
+  await tick()
+  expect(first.querySelector(LABEL)).toBeNull()
+  const query = vi.spyOn(second.querySelector(".author-header"), "querySelectorAll")
+  wrapper.append(link)
+  await tick()
+  expectUnknown(first)
+  const original = label(first)
+  original.remove()
+  await tick()
+  expect(label(first)).toBe(original)
+  expect(query).not.toHaveBeenCalled()
+})
+
+test("keeps a visible cached identity through background identity eviction", async () => {
+  const first = addPost()
+  const copy = addPost("example", "copy")
+  start()
+  await reveal(first, copy)
+  intersect([first], false)
+  for (let batch = 0; batch < 2; batch++) {
+    jsonData({
+      users: Array.from({ length: 500 }, (_, index) => ({
+        username: `background${batch}_${index}`,
+        pk: String(20000 + batch * 500 + index),
+      })),
+    })
+    await tick(2200)
+    expectCountry(copy)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  }
+})
+
+test("reuses an unexpired ID result after resolving an evicted offscreen identity", async () => {
+  const post = addPost()
+  start()
+  await reveal(post)
+  const firstStart = starts[0].at
+  intersect([post], false)
+  jsonData({
+    users: Array.from({ length: 500 }, (_, index) => ({
+      username: `other${index}`,
+      pk: String(20000 + index),
+    })),
+  })
+  await tick()
+  respond.mockResolvedValueOnce(response(profileHTML())).mockResolvedValue(response())
+  await reveal(post)
+  await tick(2200)
+  expectCountry(post)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  expect(starts[1].url.pathname).toBe("/@example")
+  expect(starts[1].options.method ?? "GET").toBe("GET")
+  await tick(firstStart + 599999 - Date.now())
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  await tick(200)
+  expect(fetchMock).toHaveBeenCalledTimes(3)
+  expect(starts[2].options.method).toBe("POST")
+})
+
+test("does not evict a visible conflicting identity into a profile retry", async () => {
+  const post = addPost()
+  start()
+  await reveal(post)
+  jsonData({ user: { username: "example", pk: "9999" } })
+  await tick()
+  expectUnknown(post)
+  jsonData({
+    users: Array.from({ length: 500 }, (_, index) => ({
+      username: `other${index}`,
+      pk: String(20000 + index),
+    })),
+  })
+  await tick(2200)
+  expectUnknown(post)
+  expect(fetchMock).toHaveBeenCalledOnce()
+})
+
+test("drops removed authentication modules from a cached context revision", async () => {
+  const post = addPost()
+  start()
+  await tick()
+  const data = modules()
+  data.define = data.define.filter(([name]) => name !== "LSD")
+  contextData.textContent = JSON.stringify(data)
+  await reveal(post)
+  expectUnknown(post)
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+test("recovers a header after an ambiguous timestamp is removed without scanning other posts", async () => {
+  const first = addPost()
+  const duplicate = first.querySelector(".timestamp").cloneNode(true)
+  duplicate.href = "/@another/post/ambiguous"
+  first.querySelector(".author-header").append(duplicate)
+  const second = addPost("another", "second")
+  start()
+  await tick()
+  expect(first.querySelector(LABEL)).toBeNull()
+  const query = vi.spyOn(second.querySelector(".author-header"), "querySelectorAll")
+  duplicate.remove()
+  await tick()
+  expectUnknown(first)
+  expect(query).not.toHaveBeenCalled()
+})
+
+test("discovers appended posts without scanning the shared feed or existing headers", async () => {
+  const feed = document.createElement("main")
+  document.body.append(feed)
+  const first = addPost()
+  feed.append(first)
+  start()
+  await tick()
+  const queries = [document, document.documentElement, feed].map((root) =>
+    vi.spyOn(root, "querySelectorAll"),
+  )
+  const unrelated = vi.spyOn(first.querySelector(".author-header"), "querySelectorAll")
+  const added = addPost("another", "added")
+  feed.append(added)
+  await tick()
+  expectUnknown(added)
+  expect(unrelated).not.toHaveBeenCalled()
+  for (const query of queries)
+    expect(query.mock.calls.filter(([selector]) => selector === TIMESTAMP)).toHaveLength(0)
+})
+
+test("discovers a time added to an existing timestamp link and recovers after its removal", async () => {
+  const post = addPost()
+  const stamp = post.querySelector(".timestamp")
+  const time = stamp.querySelector("time")
+  time.remove()
+  start()
+  await tick()
+  expect(post.querySelector(LABEL)).toBeNull()
+  stamp.append(time)
+  await tick()
+  expectUnknown(post)
+  time.remove()
+  await tick()
+  expect(post.querySelector(LABEL)).toBeNull()
+  stamp.append(time)
+  await tick()
+  expectUnknown(post)
+})
+
+test("recovers nested timestamp ambiguity after the competing wrapper is removed", async () => {
+  const first = addPost()
+  const stamp = first.querySelector(".timestamp")
+  const wrapper = document.createElement("span")
+  stamp.replaceWith(wrapper)
+  wrapper.append(stamp)
+  const competing = document.createElement("span")
+  competing.innerHTML = '<a href="/@another/post/competing"><time>now</time></a>'
+  wrapper.after(competing)
+  const second = addPost("another", "second")
+  start()
+  await tick()
+  expect(first.querySelector(LABEL)).toBeNull()
+  const query = vi.spyOn(second.querySelector(".author-header"), "querySelectorAll")
+  competing.remove()
+  await tick()
+  expectUnknown(first)
+  expect(query).not.toHaveBeenCalled()
+})
+
+test("an ambiguous shared ancestor does not rescan pending headers on feed append", async () => {
+  const feed = document.createElement("main")
+  document.body.append(feed)
+  const unsupported = addPost()
+  author(unsupported).remove()
+  unsupported.querySelector(".post-actions").remove()
+  feed.append(unsupported, addPost("another", "second"))
+  start()
+  await tick()
+  expect(unsupported.querySelector(LABEL)).toBeNull()
+  const queries = [document, document.documentElement, feed].map((root) =>
+    vi.spyOn(root, "querySelectorAll"),
+  )
+  const pending = vi.spyOn(unsupported.querySelector(".author-header"), "querySelectorAll")
+  feed.append(addPost("another", "added"))
+  await tick()
+  expect(pending).not.toHaveBeenCalled()
+  for (const query of queries)
+    expect(query.mock.calls.filter(([selector]) => selector === TIMESTAMP)).toHaveLength(0)
+})
+
+test("preserves a visible author binding when its timestamp is replaced during lookup", async () => {
+  const pending = pendingRequest()
+  const post = addPost()
+  start()
+  await reveal(post)
+  const original = label(post)
+  const stamp = post.querySelector(".timestamp")
+  const observer = observers.at(-1)
+  observer.observe.mockClear()
+  observer.unobserve.mockClear()
+  stamp.replaceWith(stamp.cloneNode(true))
+  await tick()
+  expect(starts[0].options.signal.aborted).toBe(false)
+  expect(label(post)).toBe(original)
+  expect(observer.observe).not.toHaveBeenCalled()
+  expect(observer.unobserve).not.toHaveBeenCalled()
+  pending.resolve(response())
+  await tick()
+  expectCountry(post)
+  expect(fetchMock).toHaveBeenCalledOnce()
 })
 
 test("coexists with Threads Saved Button without clicking any saved action", async () => {

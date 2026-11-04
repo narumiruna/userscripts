@@ -1734,6 +1734,228 @@ test("a delayed label among many pending posts does not scan the shared feed", a
   for (const other of others) expect(other).not.toHaveBeenCalled()
 })
 
+test.each(["valid", "quoted", "navigation", "incomplete"])(
+  "regression: appended posts do not scan the shared feed (%s trigger)",
+  async (kind) => {
+    const feed = document.createElement("main")
+    document.body.append(feed)
+    for (let index = 0; index < 100; index++) feed.append(addPost(`feed-${index}`).post)
+    const outer = addPost("outer")
+    feed.append(outer.post)
+    if (kind === "quoted") {
+      const quoted = addPost("quoted")
+      outer.post.insertBefore(quoted.post, outer.post.querySelector(".post-actions"))
+    } else if (kind === "navigation") {
+      const navigation = document.createElement("nav")
+      navigation.innerHTML = '<button aria-haspopup="menu" aria-label="More"></button>'
+      feed.prepend(navigation)
+    } else if (kind === "incomplete") outer.post.querySelector(".post-actions").remove()
+    stop = startThreadsSavedButton()
+    await tick(120)
+    const nativeQuery = feed.querySelectorAll
+    let timestampMatches = 0
+    const query = vi.spyOn(feed, "querySelectorAll").mockImplementation(function (selector) {
+      const matches = nativeQuery.call(this, selector)
+      if (selector === 'a[href*="/post/"]:has(time)') timestampMatches += matches.length
+      return matches
+    })
+
+    for (let index = 0; index < 5; index++) {
+      const incoming = addPost(`incoming-${index}`)
+      feed.append(incoming.post)
+      await tick()
+      expect(injected(incoming.post).previousElementSibling).toBe(
+        incoming.post.querySelector(".share-action"),
+      )
+    }
+
+    expect({ feedQueries: query.mock.calls.length, timestampMatches }).toEqual({
+      feedQueries: 0,
+      timestampMatches: 0,
+    })
+    if (kind === "quoted" || kind === "incomplete")
+      expect(outer.post.querySelector(":scope > .post-actions")?.querySelector(BUTTON)).toBeFalsy()
+  },
+)
+
+test.each([true, false])(
+  "recovers an incomplete post locally when its neighbor has a More menu: %s",
+  async (hasMenu) => {
+    const other = addPost("other")
+    if (!hasMenu) other.trigger.remove()
+    const pending = addPost("pending")
+    const feed = document.createElement("main")
+    feed.append(other.post, pending.post)
+    document.body.append(feed)
+    const link = pending.post.querySelector("a")
+    const header = link.parentElement
+    const row = pending.post.querySelector(".post-actions")
+    if (hasMenu) link.remove()
+    row.remove()
+    stop = startThreadsSavedButton()
+    await tick(120)
+    expect(document.querySelectorAll(BUTTON)).toHaveLength(hasMenu ? 1 : 0)
+    expect(pending.post.querySelector(BUTTON)).toBeNull()
+    const query = vi.spyOn(feed, "querySelectorAll")
+    const unrelated = vi.spyOn(other.post, "querySelectorAll")
+
+    header.append(link)
+    await tick()
+    expect(pending.post.querySelector(BUTTON)).toBeNull()
+    pending.post.append(row)
+    await tick()
+    expect(injected(pending.post).parentElement).toBe(row)
+    expect(query).not.toHaveBeenCalled()
+    expect(unrelated).not.toHaveBeenCalled()
+  },
+)
+
+test.each(["nav", "aside", "navigation-role"])(
+  "does not queue post recovery for an ineligible %s More trigger",
+  async (kind) => {
+    const navigation = document.createElement(kind === "navigation-role" ? "div" : kind)
+    if (kind === "navigation-role") navigation.setAttribute("role", "navigation")
+    navigation.innerHTML = '<button aria-haspopup="menu" aria-label="More"></button>'
+    document.body.append(navigation)
+    stop = startThreadsSavedButton()
+    await tick(120)
+
+    navigation.append(document.createElementNS("http://www.w3.org/2000/svg", "svg"))
+    await Promise.resolve()
+
+    expect(vi.getTimerCount()).toBe(0)
+    expect(navigation.querySelector(BUTTON)).toBeNull()
+  },
+)
+
+test.each(["adjacent", "quoted"])(
+  "keeps a pending post separate from a %s timestamp without a More menu",
+  async (kind) => {
+    const pending = addPost("pending")
+    const other = addPost("other")
+    other.trigger.remove()
+    const row = pending.post.querySelector(".post-actions")
+    row.remove()
+    const feed = document.createElement("main")
+    feed.append(pending.post)
+    if (kind === "quoted") pending.post.append(other.post)
+    else feed.append(other.post)
+    document.body.append(feed)
+    stop = startThreadsSavedButton()
+    await tick(120)
+    const query = vi.spyOn(feed, "querySelectorAll")
+
+    pending.post.querySelector("a").title = "Updated timestamp"
+    await tick()
+    expect(document.querySelectorAll(BUTTON)).toHaveLength(0)
+    pending.post.append(row)
+    await tick()
+    if (kind === "quoted") {
+      expect(document.querySelectorAll(BUTTON)).toHaveLength(0)
+      other.post.remove()
+      await tick()
+    }
+
+    expect(injected(pending.post).parentElement).toBe(row)
+    expect(other.post.querySelector(BUTTON)).toBeNull()
+    expect(query).not.toHaveBeenCalled()
+  },
+)
+
+test.each(["trigger", "header"])(
+  "recovers a reparented pending %s without scanning the shared feed",
+  async (kind) => {
+    const pending = addPost("pending")
+    const destination = addPost("destination")
+    const other = addPost("other")
+    pending.post.querySelector("a").remove()
+    destination.trigger.remove()
+    const feed = document.createElement("main")
+    feed.append(pending.post, destination.post, other.post)
+    document.body.append(feed)
+    setPagePosts([{ code: "destination", has_viewer_saved: true }])
+    stop = startThreadsSavedButton()
+    await tick(120)
+    expect(pending.post.querySelector(BUTTON)).toBeNull()
+    expect(destination.post.querySelector(BUTTON)).toBeNull()
+    const query = vi.spyOn(feed, "querySelectorAll")
+    const unrelated = vi.spyOn(other.post, "querySelectorAll")
+    const moved = kind === "trigger" ? pending.trigger : pending.post.firstElementChild
+
+    destination.post.firstElementChild.append(moved)
+    await tick()
+
+    expectSaved(destination.post, true)
+    expect(pending.post.querySelector(BUTTON)).toBeNull()
+    expect(injected(destination.post).parentElement).toBe(
+      destination.post.querySelector(".post-actions"),
+    )
+    expect(query).not.toHaveBeenCalled()
+    expect(unrelated).not.toHaveBeenCalled()
+  },
+)
+
+test("recovers an incomplete post after it moves between feeds without scanning either feed", async () => {
+  const pending = addPost("pending")
+  const other = addPost("other")
+  const destination = addPost("destination")
+  const firstFeed = document.createElement("main")
+  const secondFeed = document.createElement("main")
+  firstFeed.append(pending.post, other.post)
+  secondFeed.append(destination.post)
+  document.body.append(firstFeed, secondFeed)
+  const row = pending.post.querySelector(".post-actions")
+  row.remove()
+  setPagePosts([{ code: "pending", has_viewer_saved: true }])
+  stop = startThreadsSavedButton()
+  await tick(120)
+  const firstQuery = vi.spyOn(firstFeed, "querySelectorAll")
+  const secondQuery = vi.spyOn(secondFeed, "querySelectorAll")
+
+  secondFeed.append(pending.post)
+  await tick()
+  expect(pending.post.querySelector(BUTTON)).toBeNull()
+  pending.post.append(row)
+  await tick()
+
+  expectSaved(pending.post, true)
+  expect(injected(pending.post).parentElement).toBe(row)
+  expect(firstQuery).not.toHaveBeenCalled()
+  expect(secondQuery).not.toHaveBeenCalled()
+})
+
+test.each(["time", "href", "reparent"])(
+  "updates pending ownership locally after a conflicting timestamp's %s changes",
+  async (kind) => {
+    const pending = addPost("pending")
+    const other = addPost("other")
+    other.trigger.remove()
+    const feed = document.createElement("main")
+    feed.append(pending.post, other.post)
+    document.body.append(feed)
+    const row = pending.post.querySelector(".post-actions")
+    row.remove()
+    stop = startThreadsSavedButton()
+    await tick(120)
+    const query = vi.spyOn(feed, "querySelectorAll")
+    const conflict = other.post.querySelector("a").cloneNode(true)
+    pending.post.append(conflict)
+    await tick()
+    pending.post.append(row)
+    await tick()
+    expect(document.querySelectorAll(BUTTON)).toHaveLength(0)
+
+    if (kind === "time") conflict.querySelector("time").remove()
+    else if (kind === "href") conflict.href = "/@example"
+    else other.post.append(conflict)
+    await tick()
+
+    expect(injected(pending.post).parentElement).toBe(row)
+    expect(other.post.querySelector(BUTTON)).toBeNull()
+    expect(query).not.toHaveBeenCalled()
+  },
+)
+
 test("skips a malformed timestamp URL without stopping other post discovery", async () => {
   const broken = addPost("broken")
   const other = addPost("other")

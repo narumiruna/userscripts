@@ -25,7 +25,8 @@
   const TRIGGER_SELECTOR = 'button[aria-haspopup="menu"], [role="button"][aria-haspopup="menu"]'
   const SCRIPT_SELECTOR = 'script[type="application/json"]'
   const MENU_SELECTOR = '[role="menu"]'
-  const DISCOVERY_SELECTOR = `${TRIGGER_SELECTOR}, ${SCRIPT_SELECTOR}, ${MENU_SELECTOR}`
+  const POST_SELECTOR = 'a[href*="/post/"]:has(time)'
+  const DISCOVERY_SELECTOR = `${TRIGGER_SELECTOR}, ${SCRIPT_SELECTOR}, ${MENU_SELECTOR}, ${POST_SELECTOR}`
   const STRUCTURE_SELECTOR = 'button, [role="button"], svg, time, a[href]'
   const OWN_SELECTOR = `.${PREFIX}, #${PREFIX}-style, #${PREFIX}-status`
   const DETACHED_LIMIT = 500
@@ -110,19 +111,26 @@
   /** @param {Element} root */
   function postPaths(root) {
     return new Set(
-      [...root.querySelectorAll('a[href*="/post/"]:has(time)')]
+      [...root.querySelectorAll(POST_SELECTOR)]
         .filter((link) => link instanceof HTMLAnchorElement)
         .map((link) => link.pathname),
     )
   }
 
   /** @param {HTMLElement} trigger */
-  function postScope(trigger) {
-    if (!MORE_LABELS.has(labelOf(trigger))) return
-    if (trigger.closest('nav, aside, [role="navigation"]')) return
+  function isPostTrigger(trigger) {
+    return MORE_LABELS.has(labelOf(trigger)) && !trigger.closest('nav, aside, [role="navigation"]')
+  }
+
+  /**
+   * @param {HTMLElement} trigger
+   * @param {Element} [boundary]
+   */
+  function postScope(trigger, boundary) {
+    if (!isPostTrigger(trigger)) return
     for (
       let parent = trigger.parentElement;
-      parent && parent !== document.body;
+      parent && parent !== document.body && (!boundary || boundary.contains(parent));
       parent = parent.parentElement
     ) {
       const posts = postPaths(parent)
@@ -134,12 +142,13 @@
 
   /**
    * @param {HTMLElement} trigger
+   * @param {Element} [boundary]
    * @returns {Layout | undefined}
    */
-  function postActions(trigger) {
-    const scope = postScope(trigger)
+  function postActions(trigger, boundary) {
+    const scope = postScope(trigger, boundary)
     if (!scope) return
-    const link = scope.querySelector('a[href*="/post/"]:has(time)')
+    const link = scope.querySelector(POST_SELECTOR)
     if (!(link instanceof HTMLAnchorElement)) return
     const code = link.pathname.match(/\/post\/([^/]+)/)?.[1]
     if (!code) return
@@ -147,7 +156,11 @@
     // The timestamp can be in the footer, so scope may already contain the row.
     /** @type {HTMLElement | null} */
     let root = scope
-    for (; root && root !== document.body; root = root.parentElement) {
+    for (
+      ;
+      root && root !== document.body && (!boundary || boundary.contains(root));
+      root = root.parentElement
+    ) {
       if (postPaths(root).size !== 1 || postMenus(root).length !== 1) return
       const shares = [...root.querySelectorAll('button, [role="button"]')]
         .filter((control) => control instanceof HTMLElement)
@@ -295,6 +308,8 @@
     const roots = new Map()
     /** @type {Set<HTMLElement>} */
     const waiting = new Set()
+    /** @type {Set<HTMLAnchorElement>} */
+    const postLinks = new Set()
     /** @type {Map<string, Set<Shortcut>>} */
     const live = new Map()
     /** @type {Map<string, boolean>} */
@@ -633,14 +648,17 @@
       }
     }
 
-    /** @param {HTMLElement} trigger */
-    function reconcile(trigger) {
+    /**
+     * @param {HTMLElement} trigger
+     * @param {Element} [boundary]
+     */
+    function reconcile(trigger, boundary) {
       waiting.delete(trigger)
       if (!trigger.isConnected || !trigger.matches(TRIGGER_SELECTOR)) {
         removeShortcut(trigger)
         return
       }
-      const layout = postActions(trigger)
+      const layout = postActions(trigger, boundary)
       // Reserve incoming state before retiring a different live code at capacity.
       if (layout) detached.delete(layout.code)
       let shortcut = buttons.get(trigger)
@@ -656,7 +674,7 @@
         shortcut = undefined
       }
       if (!layout) {
-        if (MORE_LABELS.has(labelOf(trigger))) waiting.add(trigger)
+        if (isPostTrigger(trigger)) waiting.add(trigger)
         return
       }
       if (!shortcut) {
@@ -713,12 +731,14 @@
       ]
       for (const element of found) {
         if (!(element instanceof HTMLElement) || isOwn(element)) continue
+        if (element instanceof HTMLAnchorElement && element.matches(POST_SELECTOR))
+          postLinks.add(element)
         if (element instanceof HTMLScriptElement && element.matches(SCRIPT_SELECTOR)) {
           dirtyScripts.add(element)
         } else if (element.matches(MENU_SELECTOR)) {
           menus.add(element)
           menuDirty = true
-        } else {
+        } else if (element.matches(TRIGGER_SELECTOR)) {
           dirtyTriggers.add(element)
         }
       }
@@ -726,6 +746,11 @@
 
     /** @param {Element} target */
     function markContext(target) {
+      const link = target.closest("a")
+      if (link instanceof HTMLAnchorElement) {
+        if (link.matches(POST_SELECTOR)) postLinks.add(link)
+        else postLinks.delete(link)
+      }
       /** @type {Element | null} */
       let parent = target
       for (; parent && parent !== document.body; parent = parent.parentElement) {
@@ -785,12 +810,57 @@
       schedule()
     }
 
+    /**
+     * Find a pending trigger without querying the context's descendants.
+     * Other triggers or distinct timestamp paths mark a shared context.
+     * @param {Element} context
+     * @returns {HTMLElement | null | undefined}
+     */
+    function waitingOwner(context) {
+      for (const trigger of buttons.keys()) {
+        if (trigger.isConnected && context.contains(trigger) && isPostTrigger(trigger)) return null
+      }
+      /** @type {HTMLElement | undefined} */
+      let owner
+      for (const trigger of waiting) {
+        if (!trigger.isConnected || !context.contains(trigger) || !isPostTrigger(trigger)) continue
+        if (owner) return null
+        owner = trigger
+      }
+      if (!owner) return
+      let path
+      for (const link of postLinks) {
+        if (!link.isConnected || !context.contains(link)) continue
+        if (path !== undefined && path !== link.pathname) return null
+        path = link.pathname
+      }
+      return owner
+    }
+
+    /** @param {HTMLElement} trigger */
+    function waitingBoundary(trigger) {
+      /** @type {Element} */
+      let boundary = trigger
+      for (
+        let parent = trigger.parentElement;
+        parent && parent !== document.body;
+        parent = parent.parentElement
+      ) {
+        if (waitingOwner(parent) !== trigger) break
+        boundary = parent
+      }
+      return boundary
+    }
+
     function refreshPosts() {
       for (const [trigger, shortcut] of buttons) {
         if (trigger.isConnected && !shortcut.button.isConnected) dirtyTriggers.add(trigger)
       }
       for (const trigger of waiting.keys()) {
         if (!trigger.isConnected) waiting.delete(trigger)
+      }
+      for (const link of postLinks) {
+        if (!link.isConnected) postLinks.delete(link)
       }
       for (const menu of menus) {
         if (!menu.isConnected || !menu.matches(MENU_SELECTOR)) menus.delete(menu)
@@ -802,23 +872,22 @@
       for (const target of dirtyContexts) {
         dirtyContexts.delete(target)
         if (!target.isConnected) continue
-        // Resolve one local post, not a shared ancestor for every pending trigger.
         /** @type {Element | null} */
         let context = target
         for (; context && context !== document.body; context = context.parentElement) {
-          const paths = postPaths(context)
-          if (paths.size === 0) continue
-          if (paths.size !== 1) break
-          const candidates = postMenus(context)
-          if (candidates.length === 0) continue
-          const candidate = candidates.length === 1 ? candidates[0] : undefined
-          if (candidate && waiting.has(candidate)) dirtyTriggers.add(candidate)
+          const owner = waitingOwner(context)
+          if (owner === null) break
+          if (!owner) continue
+          dirtyTriggers.add(owner)
           break
         }
       }
       for (const trigger of dirtyTriggers) {
         dirtyTriggers.delete(trigger)
-        reconcile(trigger)
+        // Stop pending recovery before a shared ancestor, including when the
+        // timestamp or action row is still incomplete after this mutation.
+        const boundary = waiting.has(trigger) ? waitingBoundary(trigger) : undefined
+        reconcile(trigger, boundary)
       }
       for (const [trigger, shortcut] of buttons) {
         if (!trigger.isConnected || !shortcut.button.isConnected) removeShortcut(trigger)
@@ -1037,6 +1106,7 @@
       buttons.clear()
       roots.clear()
       waiting.clear()
+      postLinks.clear()
       live.clear()
       states.clear()
       detached.clear()

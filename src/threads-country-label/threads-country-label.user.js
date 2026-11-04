@@ -25,6 +25,8 @@
   const UNKNOWN = "所在地未知"
   const TITLE = "Threads 公開的帳號所在地，非國籍"
   const STATE = "THREADS_ABOUT_THIS_PROFILE:about_this_profile_country"
+  const SCRIPT_SELECTOR = 'script[type="application/json"]'
+  const STAMP_SELECTOR = 'a[href*="/post/"]:has(time)'
   /*
    * Embedded 3:2 SVG flags from country-flag-icons 1.6.20.
    * https://www.npmjs.com/package/country-flag-icons/v/1.6.20
@@ -355,7 +357,7 @@
    * @param {WeakSet<HTMLScriptElement>} [seen]
    */
   function readData(root, accept, seen) {
-    for (const script of root.querySelectorAll('script[type="application/json"]')) {
+    for (const script of root.querySelectorAll(SCRIPT_SELECTOR)) {
       if (!(script instanceof HTMLScriptElement) || seen?.has(script)) continue
       seen?.add(script)
       const text = script.textContent || ""
@@ -368,25 +370,44 @@
     }
   }
 
+  /** @type {WeakMap<HTMLScriptElement, {text: string, context: Partial<Context>}>} */
+  let contexts = new WeakMap()
+
   /** @param {Document} [root] */
   function readContext(root = document) {
     /** @type {Context} */
     const context = { viewer: "", token: "", lsd: "", version: "" }
-    readData(root, (value) => {
-      if (!Array.isArray(value)) return
-      const data = record(value[2])
-      if (!data) return
-      if (value[0] === "CurrentUserInitialData") {
-        context.viewer = numericID(data.NON_FACEBOOK_USER_ID) || "0"
+    for (const script of root.querySelectorAll(SCRIPT_SELECTOR)) {
+      if (!(script instanceof HTMLScriptElement)) continue
+      const text = script.textContent || ""
+      let snapshot = contexts.get(script)
+      // Compare text here, not only in the observer: request guards can run first.
+      if (!snapshot || snapshot.text !== text) {
+        /** @type {Partial<Context>} */
+        const part = {}
+        if (text.length <= 5000000) {
+          try {
+            visit(JSON.parse(text), (value) => {
+              if (!Array.isArray(value)) return
+              const data = record(value[2])
+              if (!data) return
+              if (value[0] === "CurrentUserInitialData")
+                part.viewer = numericID(data.NON_FACEBOOK_USER_ID) || "0"
+              if (value[0] === "DTSGInitialData" && typeof data.token === "string")
+                part.token = data.token
+              if (value[0] === "LSD" && typeof data.token === "string") part.lsd = data.token
+              if (value[0] === "WebBloksVersioningID" && typeof data.versioningID === "string")
+                part.version = data.versioningID
+            })
+          } catch {
+            // Incomplete data do not reuse modules from an earlier script revision.
+          }
+        }
+        snapshot = { text, context: part }
+        contexts.set(script, snapshot)
       }
-      if (value[0] === "DTSGInitialData" && typeof data.token === "string") {
-        context.token = data.token
-      }
-      if (value[0] === "LSD" && typeof data.token === "string") context.lsd = data.token
-      if (value[0] === "WebBloksVersioningID" && typeof data.versioningID === "string") {
-        context.version = data.versioningID
-      }
-    })
+      Object.assign(context, snapshot.context)
+    }
     return context
   }
 
@@ -465,8 +486,11 @@
     return true
   }
 
-  /** @param {HTMLAnchorElement} stamp */
-  function authorOf(stamp) {
+  /**
+   * @param {HTMLAnchorElement} stamp
+   * @param {(root: HTMLElement, witnesses?: [HTMLAnchorElement, HTMLAnchorElement]) => void} [track]
+   */
+  function authorOf(stamp, track) {
     const url = new URL(stamp.href)
     const post = url.pathname.match(/^\/@([a-z0-9_.]{1,30})\/post\/([^/]+)\/?$/i)
     if (url.origin !== location.origin || !post) return
@@ -477,8 +501,15 @@
       parent && parent !== document.body;
       parent = parent.parentElement
     ) {
-      const stamps = [...parent.querySelectorAll('a[href*="/post/"]:has(time)')]
-      if (new Set(stamps.map((link) => link.getAttribute("href"))).size > 1) return
+      const stamps = [...parent.querySelectorAll(STAMP_SELECTOR)]
+      if (new Set(stamps.map((link) => link.getAttribute("href"))).size > 1) {
+        const other = stamps.find(
+          (link) => link.getAttribute("href") !== stamp.getAttribute("href"),
+        )
+        if (other instanceof HTMLAnchorElement) track?.(parent, [stamp, other])
+        return
+      }
+      track?.(parent)
       // Do not cross an action row to treat a body mention as a header author.
       if (
         parent.querySelector(
@@ -536,6 +567,21 @@
   const identities = new Map()
   /** @type {Map<string, Cached>} */
   const cache = new Map()
+  /** @type {Map<string, number>} */
+  const visibleUsers = new Map()
+  /** @type {Map<HTMLAnchorElement, HTMLAnchorElement>} */
+  const stampLinks = new Map()
+  /** @type {Map<HTMLAnchorElement, Set<HTMLElement>>} */
+  const stampScopes = new Map()
+  /** @type {Map<HTMLElement, Set<HTMLAnchorElement>>} */
+  const scopeStamps = new Map()
+  /** @type {Map<HTMLElement, [HTMLAnchorElement, HTMLAnchorElement]>} */
+  const ambiguities = new Map()
+  /** @type {Set<Element>} */
+  const dirtyRoots = new Set()
+  /** @type {Set<HTMLAnchorElement>} */
+  const dirtyStamps = new Set()
+  let fullDiscovery = true
   let seen = new WeakSet()
   let currentURL = location.href
   let viewer = ""
@@ -556,9 +602,24 @@
     if (previous !== undefined && previous !== id) identities.set(username, null)
     else identities.set(username, id)
     if (identities.size > 500) {
-      const oldest = identities.keys().next().value
+      let oldest = identities.keys().next().value
+      for (const name of identities.keys()) {
+        if (!visibleUsers.has(name) && name !== active?.username) {
+          oldest = name
+          break
+        }
+      }
       if (oldest !== undefined) identities.delete(oldest)
     }
+  }
+
+  /** @param {Binding} binding @param {boolean} visible */
+  function setVisible(binding, visible) {
+    if (binding.visible === visible) return
+    binding.visible = visible
+    const count = (visibleUsers.get(binding.username) || 0) + (visible ? 1 : -1)
+    if (count) visibleUsers.set(binding.username, count)
+    else visibleUsers.delete(binding.username)
   }
 
   /** @param {HTMLAnchorElement} link @param {Binding} binding */
@@ -646,7 +707,7 @@
       ? new IntersectionObserver((entries) => {
           for (const entry of entries) {
             const binding = bindings.get(/** @type {HTMLAnchorElement} */ (entry.target))
-            if (binding) binding.visible = entry.isIntersecting
+            if (binding) setVisible(binding, entry.isIntersecting)
           }
           if (active && !visible(active.username)) active.controller.abort()
           schedule()
@@ -722,6 +783,7 @@
     /** @type {Country | undefined} */
     let country
     let cancelled = false
+    let reused = false
     try {
       if (!id) {
         const html = await request(task, new URL(`/@${task.username}`, location.origin))
@@ -748,6 +810,11 @@
       }
       checkTask(task)
       if (identities.get(task.username) !== id) return
+      // A profile can restore an evicted identity while its result is still valid.
+      if (cached(task.username)) {
+        reused = true
+        return
+      }
       const context = readContext()
       if (!context.token || !context.lsd || !context.version) return
       const url = new URL("/async/wbloks/fetch/", location.origin)
@@ -784,6 +851,7 @@
       if (
         !stopped &&
         !cancelled &&
+        !reused &&
         task.generation === generation &&
         currentURL === location.href &&
         readContext().viewer === viewer &&
@@ -803,18 +871,131 @@
     }
   }
 
+  /** @param {HTMLAnchorElement} link */
+  function removeBinding(link) {
+    const binding = bindings.get(link)
+    if (!binding) return
+    setVisible(binding, false)
+    visibility?.unobserve(link)
+    link.classList.remove(`${PREFIX}-author`)
+    binding.host.classList.remove(`${PREFIX}-host`)
+    hosts.delete(binding.host)
+    binding.label.remove()
+    bindings.delete(link)
+    stampLinks.delete(binding.stamp)
+  }
+
+  /** @param {HTMLAnchorElement} stamp */
+  function clearScopes(stamp) {
+    for (const root of stampScopes.get(stamp) || []) {
+      const stamps = scopeStamps.get(root)
+      stamps?.delete(stamp)
+      if (!stamps?.size) {
+        scopeStamps.delete(root)
+        ambiguities.delete(root)
+      }
+    }
+    stampScopes.delete(stamp)
+  }
+
+  /** @param {Node} node */
+  function isOwn(node) {
+    const element = node instanceof Element ? node : node.parentElement
+    return Boolean(element?.closest(`.${PREFIX}, #${PREFIX}-style`))
+  }
+
+  /** @param {Element} target */
+  function markContext(target) {
+    for (
+      let parent = /** @type {Element | null} */ (target);
+      parent;
+      parent = parent.parentElement
+    ) {
+      if (!(parent instanceof HTMLElement)) continue
+      // Two distinct live timestamps still prove that this shared scope is ambiguous.
+      const witnesses = ambiguities.get(parent)
+      if (
+        witnesses?.every(
+          (link) => link.isConnected && parent.contains(link) && link.matches(STAMP_SELECTOR),
+        ) &&
+        witnesses[0].getAttribute("href") !== witnesses[1].getAttribute("href")
+      )
+        continue
+      for (const stamp of scopeStamps.get(parent) || []) dirtyStamps.add(stamp)
+    }
+  }
+
+  /** @param {Element} root */
+  function collect(root) {
+    if (!root.isConnected || isOwn(root)) return
+    const parent = root.closest(STAMP_SELECTOR)
+    for (const stamp of [...(parent ? [parent] : []), ...root.querySelectorAll(STAMP_SELECTOR)]) {
+      if (stamp instanceof HTMLAnchorElement && !isOwn(stamp)) dirtyStamps.add(stamp)
+    }
+  }
+
+  /** @param {HTMLAnchorElement} stamp */
+  function reconcile(stamp) {
+    clearScopes(stamp)
+    const author =
+      stamp.isConnected && stamp.matches(STAMP_SELECTOR)
+        ? authorOf(stamp, (root, witnesses) => {
+            if (witnesses) ambiguities.set(root, witnesses)
+            else ambiguities.delete(root)
+            const scopes = stampScopes.get(stamp) || new Set()
+            scopes.add(root)
+            stampScopes.set(stamp, scopes)
+            const stamps = scopeStamps.get(root) || new Set()
+            stamps.add(stamp)
+            scopeStamps.set(root, stamps)
+          })
+        : undefined
+    const previous = stampLinks.get(stamp)
+    const old = previous && bindings.get(previous)
+    if (
+      previous &&
+      (!author ||
+        author.link !== previous ||
+        old?.username !== author.username ||
+        old.path !== author.path)
+    )
+      removeBinding(previous)
+    if (!author) return
+    const host = author.link.parentElement
+    if (!host) return
+    let binding = bindings.get(author.link)
+    if (binding && (binding.username !== author.username || binding.path !== author.path)) {
+      removeBinding(author.link)
+      binding = undefined
+    }
+    if (!binding) {
+      const label = document.createElement("span")
+      label.className = PREFIX
+      label.setAttribute("role", "note")
+      binding = { username: author.username, path: author.path, stamp, host, label, visible: false }
+      bindings.set(author.link, binding)
+      visibility?.observe(author.link)
+    } else {
+      stampLinks.delete(binding.stamp)
+      binding.stamp = stamp
+    }
+    stampLinks.set(stamp, author.link)
+  }
+
   function reset() {
     generation++
     active?.controller.abort()
     active = undefined
     visibility?.disconnect()
-    for (const [link, binding] of bindings) {
-      link.classList.remove(`${PREFIX}-author`)
-      binding.host.classList.remove(`${PREFIX}-host`)
-      hosts.delete(binding.host)
-      binding.label.remove()
-    }
-    bindings.clear()
+    for (const link of bindings.keys()) removeBinding(link)
+    visibleUsers.clear()
+    stampLinks.clear()
+    stampScopes.clear()
+    scopeStamps.clear()
+    ambiguities.clear()
+    dirtyRoots.clear()
+    dirtyStamps.clear()
+    fullDiscovery = true
     identities.clear()
     cache.clear()
     seen = new WeakSet()
@@ -840,42 +1021,33 @@
       },
       seen,
     )
-    /** @type {Map<HTMLAnchorElement, {username: string, stamp: HTMLAnchorElement, path: string}>} */
-    const authors = new Map()
     if (!/^\/(search|login|accounts|challenge)(\/|$)/.test(location.pathname)) {
-      for (const stamp of document.querySelectorAll('a[href*="/post/"]:has(time)')) {
-        if (!(stamp instanceof HTMLAnchorElement)) continue
-        const author = authorOf(stamp)
-        if (author)
-          authors.set(author.link, { username: author.username, stamp, path: author.path })
+      if (fullDiscovery) collect(document.documentElement)
+      for (const root of dirtyRoots) collect(root)
+      for (const stamp of stampScopes.keys()) {
+        if (!stamp.isConnected) dirtyStamps.add(stamp)
       }
-    }
-    for (const [link, binding] of bindings) {
-      const author = authors.get(link)
-      if (!author || author.username !== binding.username || author.path !== binding.path) {
-        visibility?.unobserve(link)
-        link.classList.remove(`${PREFIX}-author`)
-        binding.host.classList.remove(`${PREFIX}-host`)
-        hosts.delete(binding.host)
-        binding.label.remove()
-        bindings.delete(link)
+      // Resolve replacements before retiring their old timestamp nodes.
+      const connected = [...dirtyStamps].filter(
+        (stamp) => stamp.isConnected && stamp.matches(STAMP_SELECTOR),
+      )
+      for (const stamp of connected) {
+        dirtyStamps.delete(stamp)
+        reconcile(stamp)
       }
+      for (const stamp of dirtyStamps) reconcile(stamp)
     }
+    fullDiscovery = false
+    dirtyRoots.clear()
+    dirtyStamps.clear()
     window.clearTimeout(expiryTimer)
     let expires = Number.POSITIVE_INFINITY
-    for (const [link, author] of authors) {
+    for (const [link, binding] of bindings) {
       const host = link.parentElement
-      if (!host) continue
-      let binding = bindings.get(link)
-      if (!binding) {
-        const label = document.createElement("span")
-        label.className = PREFIX
-        label.setAttribute("role", "note")
-        binding = { ...author, host, label, visible: false }
-        bindings.set(link, binding)
-        visibility?.observe(link)
+      if (!link.isConnected || !binding.stamp.isConnected || !host) {
+        removeBinding(link)
+        continue
       }
-      binding.stamp = author.stamp
       if (binding.host !== host) {
         binding.host.classList.remove(`${PREFIX}-host`)
         hosts.delete(binding.host)
@@ -910,22 +1082,46 @@
   const observer = new MutationObserver((mutations) => {
     let changed = false
     for (const mutation of mutations) {
+      const target =
+        mutation.target instanceof Element ? mutation.target : mutation.target.parentElement
+      if (!target || isOwn(target)) continue
       if (
-        mutation.type === "attributes" &&
-        mutation.attributeName === "class" &&
-        !bindings.has(/** @type {HTMLAnchorElement} */ (mutation.target)) &&
-        !hosts.has(/** @type {HTMLElement} */ (mutation.target))
-      ) {
+        mutation.type === "childList" &&
+        [...mutation.addedNodes, ...mutation.removedNodes].every(isOwn) &&
+        [...mutation.removedNodes].every((node) => node.isConnected)
+      )
+        continue
+      if (target instanceof HTMLScriptElement) {
+        seen.delete(target)
+        changed = true
         continue
       }
-      changed = true
-      const node =
-        mutation.target instanceof HTMLScriptElement
-          ? mutation.target
-          : mutation.target.parentElement
-      if (node instanceof HTMLScriptElement) seen.delete(node)
+      if (mutation.type === "attributes" && mutation.attributeName === "class") {
+        if (
+          (bindings.has(/** @type {HTMLAnchorElement} */ (target)) &&
+            !target.classList.contains(`${PREFIX}-author`)) ||
+          (hosts.has(/** @type {HTMLElement} */ (target)) &&
+            !target.classList.contains(`${PREFIX}-host`))
+        )
+          markContext(target)
+        continue
+      }
+      markContext(target)
+      if (mutation.type === "childList") {
+        for (const node of mutation.addedNodes) {
+          if (
+            node instanceof Element &&
+            !isOwn(node) &&
+            (node.matches("a, time, script") || node.querySelector("a, time, script"))
+          )
+            dirtyRoots.add(node)
+        }
+        if ([...mutation.removedNodes].some((node) => node instanceof Element)) changed = true
+      } else if (mutation.type === "attributes") {
+        dirtyRoots.add(target)
+      }
     }
-    if (changed) schedule()
+    if (changed || dirtyRoots.size || dirtyStamps.size) schedule()
   })
   observer.observe(document.documentElement, {
     childList: true,
@@ -951,6 +1147,7 @@
     window.removeEventListener("popstate", schedule)
     window.removeEventListener("hashchange", schedule)
     reset()
+    contexts = new WeakMap()
     style.remove()
   }
 })()

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Saved Button
 // @namespace    userscripts/reddit-saved-button
-// @version      0.1.0
+// @version      0.1.1
 // @description  Add a saved-state bookmark after each Reddit post's Share control.
 // @match        https://www.reddit.com/*
 // @match        https://reddit.com/*

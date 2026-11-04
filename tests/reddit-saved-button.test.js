@@ -164,7 +164,7 @@ test("the exact source has installable Reddit metadata and no runtime dependenci
   expect(header).not.toBeNull()
   expect(header[0]).toMatch(/^\/\/ @name\s+Reddit Saved Button$/m)
   expect(header[0]).toMatch(/^\/\/ @namespace\s+userscripts\/reddit-saved-button$/m)
-  expect(header[0]).toMatch(/^\/\/ @version\s+0\.1\.0$/m)
+  expect(header[0]).toMatch(/^\/\/ @version\s+0\.1\.1$/m)
   expect(header[0]).toMatch(/^\/\/ @grant\s+none$/m)
   expect(header[0]).toMatch(/^\/\/ @noframes$/m)
   expect(header[0]).toMatch(/^\/\/ @run-at\s+document-idle$/m)

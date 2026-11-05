@@ -13,7 +13,7 @@ const installUrl =
 test("the source starts with installable userscript metadata", () => {
   const header = source.match(/^\/\/ ==UserScript==\n[\s\S]*?\/\/ ==\/UserScript==/)
   expect(header).not.toBeNull()
-  expect(header[0]).toMatch(/^\/\/ @version\s+0\.2\.3$/m)
+  expect(header[0]).toMatch(/^\/\/ @version\s+0\.2\.4$/m)
   expect(header[0]).toMatch(/^\/\/ @grant\s+none$/m)
   expect(header[0]).toMatch(/^\/\/ @noframes$/m)
   expect(header[0]).toMatch(/^\/\/ @run-at\s+document-idle$/m)

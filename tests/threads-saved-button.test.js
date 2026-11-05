@@ -302,27 +302,193 @@ test("does not use an existing open menu", async () => {
   )
 })
 
-test("regression: leaves a sole visible menu without ownership untouched", async () => {
-  const stale = showMenu(document.createElement("div"))
-  stale.menu.hidden = true
+test.each(["Save", "Unsave", "取消儲存", "取消收藏"])(
+  "regression: directly requests %s from a new Threads menu without IDs or aria-controls",
+  async (label) => {
+    const saved = label !== "Save"
+    setPagePosts([{ code: "first", has_viewer_saved: saved }])
+    const stale = showMenu(document.createElement("div"))
+    stale.menu.hidden = true
+    const { post, trigger } = addPost()
+    const duplicate = addPost()
+    let current
+    trigger.addEventListener("click", () => {
+      current = showMenu(trigger, label, false)
+      current.menu.removeAttribute("id")
+    })
+    stop = startThreadsSavedButton()
+    expectSaved(post, saved)
+    injected(post).click()
+    await tick()
+
+    expect(stale.click).not.toHaveBeenCalled()
+    expect(current.click).toHaveBeenCalledOnce()
+    expect(current.menu.isConnected).toBe(false)
+    expect(trigger.hasAttribute("aria-controls")).toBe(false)
+    expect(injected(post).disabled).toBe(false)
+    expectSaved(post, !saved)
+    expectSaved(duplicate.post, !saved)
+  },
+)
+
+test("waits for a new unlinked menu and its delayed Unsave label", async () => {
   const { post, trigger } = addPost()
-  let current
+  let action
   trigger.addEventListener("click", () => {
-    current = showMenu(trigger, "Save", false)
+    window.setTimeout(() => {
+      action = showMenu(trigger, "", false)
+      window.setTimeout(() => {
+        action.item.textContent = "Unsave"
+      }, 100)
+    }, 100)
+  })
+  stop = startThreadsSavedButton()
+  injected(post).click()
+  await tick(150)
+  expect(action.click).not.toHaveBeenCalled()
+  await tick(100)
+  expect(action.click).toHaveBeenCalledOnce()
+  expectSaved(post, false)
+})
+
+test("does not use an unlinked menu that already existed before the shortcut click", async () => {
+  const { post, trigger } = addPost()
+  const action = showMenu(trigger, "Unsave", false)
+  action.menu.hidden = true
+  trigger.setAttribute("aria-expanded", "false")
+  trigger.addEventListener("click", () => {
+    action.menu.hidden = false
+    trigger.setAttribute("aria-expanded", "true")
+  })
+  stop = startThreadsSavedButton()
+  injected(post).click()
+  await tick(2600)
+  expect(action.click).not.toHaveBeenCalled()
+  expectSaved(post, undefined)
+})
+
+test.each(["two-menus", "another-trigger", "empty-controls", "missing-controls"])(
+  "does not infer native menu ownership with %s",
+  async (kind) => {
+    const { post, trigger } = addPost()
+    const other = addPost("other")
+    let action
+    trigger.addEventListener("click", () => {
+      action = showMenu(trigger, "Unsave", false)
+      if (kind === "two-menus") showMenu(document.createElement("div"), "Save", false)
+      if (kind === "another-trigger") other.trigger.setAttribute("aria-expanded", "true")
+      if (kind === "empty-controls") trigger.setAttribute("aria-controls", "")
+      if (kind === "missing-controls") trigger.setAttribute("aria-controls", "missing-menu")
+    })
+    stop = startThreadsSavedButton()
+    injected(post).click()
+    await tick(2600)
+    expect(action.click).not.toHaveBeenCalled()
+    expect(action.menu.isConnected).toBe(true)
+    expectSaved(post, undefined)
+  },
+)
+
+test.each(["another-trigger", "another-menu", "hidden", "disabled", "removed-controls"])(
+  "rechecks an unlinked menu before dispatch after %s",
+  async (change) => {
+    const { post, trigger } = addPost()
+    const other = addPost("other")
+    let action
+    trigger.addEventListener("click", () => {
+      action = showMenu(trigger, "Unsave", false)
+    })
+    stop = startThreadsSavedButton()
+    injected(post).click()
+    if (change === "another-trigger") other.trigger.setAttribute("aria-expanded", "true")
+    if (change === "another-menu") showMenu(document.createElement("div"), "Save", false)
+    if (change === "hidden") action.menu.hidden = true
+    if (change === "disabled") action.item.setAttribute("aria-disabled", "true")
+    if (change === "removed-controls") {
+      trigger.setAttribute("aria-controls", "missing-menu")
+      trigger.removeAttribute("aria-controls")
+    }
+    await tick()
+    expect(action.click).not.toHaveBeenCalled()
+  },
+)
+
+test("does not replace a pending unlinked menu with a different portal", async () => {
+  const { post, trigger } = addPost()
+  let action
+  trigger.addEventListener("click", () => {
+    action = showMenu(trigger, "", false)
+  })
+  stop = startThreadsSavedButton()
+  injected(post).click()
+  action.menu.remove()
+  const replacement = showMenu(trigger, "Unsave", false)
+  await tick(2600)
+  expect(action.click).not.toHaveBeenCalled()
+  expect(replacement.click).not.toHaveBeenCalled()
+})
+
+test.each(["same", "different"])(
+  "accepts delayed explicit ownership only for the %s pinned unlinked menu",
+  async (kind) => {
+    const { post, trigger } = addPost()
+    let action
+    trigger.addEventListener("click", () => {
+      action = showMenu(trigger, "", false)
+    })
+    stop = startThreadsSavedButton()
+    injected(post).click()
+    const owned = kind === "same" ? action : showMenu(trigger, "Unsave", false)
+    trigger.setAttribute("aria-controls", owned.menu.id)
+    action.item.textContent = "Unsave"
+    await tick(2600)
+    expect(action.click).toHaveBeenCalledTimes(kind === "same" ? 1 : 0)
+    if (owned !== action) expect(owned.click).not.toHaveBeenCalled()
+  },
+)
+
+test("does not downgrade explicit ownership when aria-controls is removed", async () => {
+  const { post, trigger } = addPost()
+  let action
+  trigger.addEventListener("click", () => {
+    action = showMenu(trigger, "Unsave")
+  })
+  stop = startThreadsSavedButton()
+  injected(post).click()
+  trigger.removeAttribute("aria-controls")
+  await tick()
+  expect(action.click).not.toHaveBeenCalled()
+})
+
+test("checks native microtask ownership changes before the observer callback runs", async () => {
+  const { post, trigger } = addPost()
+  let action
+  trigger.addEventListener("click", () => {
+    action = showMenu(trigger, "Unsave", false)
+    void Promise.resolve().then(() => {
+      trigger.setAttribute("aria-controls", "missing-menu")
+      trigger.removeAttribute("aria-controls")
+    })
   })
   stop = startThreadsSavedButton()
   injected(post).click()
   await tick()
+  expect(action.click).not.toHaveBeenCalled()
+})
 
-  expect(stale.click).not.toHaveBeenCalled()
-  expect(current?.click).not.toHaveBeenCalled()
+test("does not downgrade ownership added and removed before a pending label arrives", async () => {
+  const { post, trigger } = addPost()
+  let action
+  trigger.addEventListener("click", () => {
+    action = showMenu(trigger, "", false)
+  })
+  stop = startThreadsSavedButton()
+  injected(post).click()
+  trigger.setAttribute("aria-controls", "missing-menu")
+  trigger.removeAttribute("aria-controls")
+  action.item.textContent = "Unsave"
   await tick(2600)
-  expect(current?.click).not.toHaveBeenCalled()
-  expect(current?.menu.isConnected).toBe(true)
-  expect(injected(post).disabled).toBe(false)
-  expect(document.getElementById("threads-saved-button-status")?.textContent).toContain(
-    "Save action unavailable",
-  )
+  expect(action.click).not.toHaveBeenCalled()
 })
 
 test("does not click an unrelated newly opened menu", async () => {
@@ -927,11 +1093,13 @@ test.each(["duplicate-id", "missing-idref", "two-menus", "two-owners"])(
   },
 )
 
-test("waits for explicit delayed ownership without clicking an unowned menu", async () => {
+test("waits for explicit delayed ownership when multiple new menus appear", async () => {
   const { post, trigger } = addPost()
   let action
+  let unrelated
   trigger.addEventListener("click", () => {
     action = showMenu(trigger, "Save", false)
+    unrelated = showMenu(document.createElement("div"), "Unsave", false)
   })
   stop = startThreadsSavedButton()
   injected(post).click()
@@ -940,6 +1108,7 @@ test("waits for explicit delayed ownership without clicking an unowned menu", as
   trigger.setAttribute("aria-controls", action.menu.id)
   await tick()
   expect(action.click).toHaveBeenCalledOnce()
+  expect(unrelated.click).not.toHaveBeenCalled()
 })
 
 test("does not observe an unrelated unowned menu as saved evidence", async () => {

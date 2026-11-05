@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Threads Saved Button
 // @namespace    userscripts/threads-saved-button
-// @version      0.2.3
+// @version      0.2.4
 // @description  Add a saved-state bookmark after each Threads post's Share control.
 // @match        https://www.threads.com/*
 // @match        https://threads.com/*
@@ -47,7 +47,17 @@
 
   /** @typedef {{code: string, root: HTMLElement, row: HTMLElement, share: HTMLElement}} Layout */
   /** @typedef {Layout & {button: HTMLButtonElement}} Shortcut */
-  /** @typedef {{controller: AbortController, trigger: HTMLElement, shortcut: Shortcut, code: string, generation: number}} Operation */
+  /**
+   * @typedef {object} Operation
+   * @property {AbortController} controller
+   * @property {HTMLElement} trigger
+   * @property {Shortcut} shortcut
+   * @property {string} code
+   * @property {number} generation
+   * @property {Set<Element>} previousMenus
+   * @property {boolean} explicitSeen
+   * @property {HTMLElement} [fallbackMenu]
+   */
 
   /** @param {string} text */
   function normalize(text) {
@@ -228,9 +238,8 @@
     return menu
   }
 
-  /** @param {HTMLElement} trigger */
-  function saveItem(trigger) {
-    const menu = ownedMenu(trigger)
+  /** @param {HTMLElement | undefined} menu */
+  function saveItem(menu) {
     if (!menu || isDisabled(menu)) return
     const items = menu.querySelectorAll('[role="menuitem"]')
     const candidates = items.length ? items : menu.querySelectorAll('button, [role="button"]')
@@ -450,7 +459,7 @@
       const open = openShortcut()
       if (!open) return
       const [trigger, shortcut] = open
-      const item = saveItem(trigger)
+      const item = saveItem(ownedMenu(trigger))
       if (item) setSaved(shortcut.code, UNSAVE_LABELS.has(labelOf(item)))
     }
 
@@ -494,7 +503,7 @@
       const [owner, shortcut] = open
       const layout = postActions(owner)
       if (layout?.code !== shortcut.code) return
-      const item = saveItem(owner)
+      const item = saveItem(ownedMenu(owner))
       if (item?.contains(event.target)) setSaved(shortcut.code, !UNSAVE_LABELS.has(labelOf(item)))
     }
 
@@ -537,6 +546,30 @@
       )
     }
 
+    /** @param {Operation} operation */
+    function operationMenu(operation) {
+      const { trigger } = operation
+      let menu
+      if (trigger.hasAttribute("aria-controls")) {
+        operation.explicitSeen = true
+        menu = ownedMenu(trigger)
+      } else {
+        if (operation.explicitSeen) return
+        // Threads can open a portal without IDs. Limit inference to this click.
+        const expanded = [...document.querySelectorAll(TRIGGER_SELECTOR)].filter(
+          (element) => element.getAttribute("aria-expanded") === "true",
+        )
+        if (expanded.length !== 1 || expanded[0] !== trigger) return
+        const visible = visibleMenus()
+        if (visible.length !== 1) return
+        menu = visible[0]
+        if (!menu || operation.previousMenus.has(menu)) return
+      }
+      if (operation.fallbackMenu && operation.fallbackMenu !== menu) return
+      if (!operation.explicitSeen) operation.fallbackMenu = menu
+      return menu
+    }
+
     /**
      * The document observer calls this waiter only for related mutations.
      * @param {Operation} operation
@@ -571,7 +604,7 @@
           if (opened && !expanded) return cancel()
           opened ||= expanded
           if (!expanded) return
-          const item = saveItem(trigger)
+          const item = saveItem(operationMenu(operation))
           if (item) finish(item)
         }
         pendingCheck = check
@@ -612,6 +645,8 @@
         shortcut,
         code: layout.code,
         generation,
+        previousMenus: new Set(document.querySelectorAll(MENU_SELECTOR)),
+        explicitSeen: trigger.hasAttribute("aria-controls"),
       }
       active = operation
       const { controller, code } = operation
@@ -624,10 +659,12 @@
         if (!isCurrent(operation)) throw new Error("Save action cancelled.")
         trigger.click()
         const item = await waitForSaveItem(operation)
+        // Native microtasks can change ownership before the observer callback runs.
+        handleMutations(observer.takeRecords())
         if (
           !isCurrent(operation) ||
           trigger.getAttribute("aria-expanded") !== "true" ||
-          saveItem(trigger) !== item
+          saveItem(operationMenu(operation)) !== item
         ) {
           throw new Error("Save action cancelled.")
         }
@@ -922,7 +959,8 @@
       pendingCheck?.()
     }
 
-    const observer = new MutationObserver((records) => {
+    /** @param {MutationRecord[]} records */
+    function handleMutations(records) {
       if (stopped) return
       routeChanged()
       let related = false
@@ -988,6 +1026,8 @@
             markContext(target)
         } else {
           const name = record.attributeName
+          if (active && target === active.trigger && name === "aria-controls")
+            active.explicitSeen = true
           if (target.matches(MENU_SELECTOR)) menus.add(/** @type {HTMLElement} */ (target))
           if (name === "aria-expanded" || name === "aria-controls" || name === "id") {
             if (
@@ -1025,7 +1065,8 @@
         menuDirty
       )
         schedule()
-    })
+    }
+    const observer = new MutationObserver(handleMutations)
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "violentmonkey": {
+      "command": "npx",
+      "args": ["-y", "@violentmonkey/mcp", "-p", "5678"]
+    }
+  }
+}

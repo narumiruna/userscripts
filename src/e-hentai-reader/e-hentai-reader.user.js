@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         E-Hentai Reader
 // @namespace    userscripts/e-hentai-reader
-// @version      0.2.0
+// @version      0.2.1
 // @description  Zoom reader images, remember view settings, and resume reading from locally saved progress.
 // @match        https://e-hentai.org/*
 // @match        https://exhentai.org/*
@@ -128,7 +128,8 @@
     const style = document.createElement("style")
     style.id = styleId
     style.textContent = `
-      .eh-reader-progress { display: inline-block; margin: 4px 8px; font: 13px/1.4 system-ui, sans-serif; }
+      .eh-reader-progress { display: inline-block; margin: 4px 8px; white-space: nowrap;
+        font: 13px/1.4 system-ui, sans-serif; }
       #${toolbarId} { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647;
         padding: 8px; border: 1px solid #666; border-radius: 8px; background: #202124; color: #f1f3f4;
         font: 13px/1.4 system-ui, sans-serif; }
@@ -153,8 +154,10 @@
     function refresh() {
       /** @type {Map<Element, string>} */
       const targets = new Map()
-      for (const link of document.querySelectorAll("a[href]")) {
-        if (!link.textContent?.trim() || link.classList.contains("eh-reader-progress")) continue
+      // Gallery URLs also occur in pagination, thumbnails, and navigation controls.
+      for (const title of document.querySelectorAll(".glink")) {
+        const link = title.closest("a[href]")
+        if (!(link instanceof HTMLAnchorElement) || !title.textContent?.trim()) continue
         const url = localUrl(link.getAttribute("href") ?? "")
         const match = url?.pathname.match(/^\/g\/([1-9]\d*)\/[a-z0-9]+\/?$/i)
         if (match) targets.set(link, match[1])
@@ -213,7 +216,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["href"],
+      attributeFilter: ["href", "class"],
     })
     refresh()
     return () => {

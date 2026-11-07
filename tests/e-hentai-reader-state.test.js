@@ -15,8 +15,14 @@ const multi = `<div id="pane_images">
   <div class="mimg" id="image_2" style="max-width:600px;height:1224px"></div>
 </div>`
 const listing = `<a href="/g/123/gallery/"><div class="glink">Example gallery</div></a>
-  <a href="https://other.example/g/123/gallery/">Foreign gallery</a>
-  <a href="http://[">Invalid link</a>`
+  <a class="glink" href="https://other.example/g/123/gallery/">Foreign gallery</a>
+  <a class="glink" href="http://[">Invalid link</a>`
+const pagination = `<table class="ptt"><tbody><tr>
+  <td><a href="/g/123/gallery/">&lt;</a></td>
+  <td><a href="/g/123/gallery/">1</a></td>
+  <td><a href="/g/123/gallery/?p=1">2</a></td>
+  <td><a href="/g/123/gallery/?p=1">&gt;</a></td>
+</tr></tbody></table>`
 let dom
 let page
 let doc
@@ -511,7 +517,10 @@ test("updates dynamic gallery results and cross-tab changes without duplicate ba
     local: { [progressKey]: { page: 8, offset: 0.3, path: "/s/saved/123-8" } },
   })
   start()
-  doc.body.insertAdjacentHTML("beforeend", '<a href="/g/456/other/">Another gallery</a>')
+  doc.body.insertAdjacentHTML(
+    "beforeend",
+    '<a href="/g/456/other/"><div class="glink">Another gallery</div></a>',
+  )
   page.localStorage.setItem(
     "eh-reader:progress:456",
     JSON.stringify({ page: 2, offset: 0.1, path: "/mpv/456/other/" }),
@@ -605,6 +614,78 @@ test.each(["ctrlKey", "metaKey", "shiftKey", "altKey"])(
     expect(saved()).toEqual(progress)
   },
 )
+
+test.each(["e-hentai.org", "exhentai.org"])(
+  "keeps both gallery pagination tables and navigation links unchanged on %s",
+  (hostname) => {
+    setup({
+      path: "/g/123/gallery/?p=1",
+      hostname,
+      html: `<h1 id="gn">Example gallery</h1>${pagination}<div id="gdt">Thumbnails</div>${pagination}<a id="navigation" href="/g/123/gallery/?p=0">Return to gallery</a>`,
+      local: { [progressKey]: { page: 5, offset: 0.3, path: "/s/saved/123-5" } },
+    })
+    const tables = [...doc.querySelectorAll(".ptt")].map((table) => table.outerHTML)
+    start()
+    expect([...doc.querySelectorAll(".ptt")].map((table) => table.outerHTML)).toEqual(tables)
+    expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
+    expect(doc.getElementById("gn").nextElementSibling.className).toBe("eh-reader-progress")
+    expect(
+      doc.getElementById("navigation").nextElementSibling?.matches(".eh-reader-progress"),
+    ).not.toBe(true)
+    expect(page.getComputedStyle(doc.querySelector(".eh-reader-progress")).whiteSpace).toBe(
+      "nowrap",
+    )
+  },
+)
+
+test("does not decorate gallery pagination when no title is available", () => {
+  setup({
+    path: "/g/123/gallery/",
+    html: pagination,
+    local: { [progressKey]: { page: 5, offset: 0.3, path: "/s/saved/123-5" } },
+  })
+  const before = doc.querySelector(".ptt").outerHTML
+  start()
+  expect(doc.querySelector(".ptt").outerHTML).toBe(before)
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+})
+
+test.each([
+  '<a href="/g/123/gallery/"><div class="glink">Example gallery</div></a>',
+  '<a href="/g/123/gallery/"><span class="glink">Example gallery</span></a>',
+  '<a class="glink" href="/g/123/gallery/">Example gallery</a>',
+  '<a href="/g/123/gallery/"><div class="glink"><span class="glink">Example gallery</span></div></a>',
+])("decorates a gallery title once without annotating its other links: %s", (title) => {
+  setup({
+    path: "/",
+    html: `<div class="glname">${title}</div>${pagination}<a id="thumbnail" href="/g/123/gallery/">Thumbnail</a>`,
+    local: { [progressKey]: { page: 5, offset: 0.3, path: "/s/saved/123-5" } },
+  })
+  start()
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
+  expect(doc.querySelector(".glname > .eh-reader-progress")).not.toBeNull()
+  expect(doc.querySelector(".ptt .eh-reader-progress")).toBeNull()
+  expect(
+    doc.getElementById("thumbnail").nextElementSibling?.matches(".eh-reader-progress"),
+  ).not.toBe(true)
+})
+
+test("updates resume indicators when a result gains or loses its native title class", async () => {
+  setup({
+    path: "/",
+    html: '<a href="/g/123/gallery/"><span id="title">Example gallery</span></a>',
+    local: { [progressKey]: { page: 5, offset: 0.3, path: "/s/saved/123-5" } },
+  })
+  start()
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+  const title = doc.getElementById("title")
+  title.classList.add("glink")
+  await settle()
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
+  title.classList.remove("glink")
+  await settle()
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+})
 
 test("gallery indicators recover when the site removes their sibling badge", async () => {
   setup({

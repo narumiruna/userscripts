@@ -1,6 +1,6 @@
 # Userscripts
 
-Browser userscripts for Threads, Reddit, PTT, and YouTube. Each script is a standalone `.user.js` file: the source is the installation file. No build or npm commands are required to install or run it.
+Browser userscripts for Threads, Reddit, PTT, YouTube, E-Hentai, and ExHentai. Each script is a standalone `.user.js` file: the source is the installation file. No build or npm commands are required to install or run it.
 
 ## Scripts
 
@@ -11,12 +11,14 @@ Browser userscripts for Threads, Reddit, PTT, and YouTube. Each script is a stan
 | [Reddit Saved Button](src/reddit-saved-button/README.md)     | Add a save/unsave button after Share on Reddit posts.      | [Install][reddit-install]          |
 | [PTT Auto Media](src/ptt-auto-media/README.md)               | Display linked images and videos inline in PTT articles.   | [Install][ptt-install]             |
 | [YouTube Live Rewind](src/youtube-live-rewind/README.md)     | Enable the native DVR timeline for supported live streams. | [Install][youtube-install]         |
+| [E-Hentai Reader](src/e-hentai-reader/README.md)             | Zoom reader images and fit them to the reading area.       | [Install][eh-reader-install]       |
 
 [threads-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-saved-button/threads-saved-button.user.js
 [threads-country-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-country-label/threads-country-label.user.js
 [reddit-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/reddit-saved-button/reddit-saved-button.user.js
 [ptt-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/ptt-auto-media/ptt-auto-media.user.js
 [youtube-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/youtube-live-rewind/youtube-live-rewind.user.js
+[eh-reader-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/e-hentai-reader/e-hentai-reader.user.js
 
 Script names link to their documentation. Each script README links to its source and contains its usage, limits, privacy details, and validation status.
 

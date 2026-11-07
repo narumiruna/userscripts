@@ -11,7 +11,7 @@ Browser userscripts for Threads, Reddit, PTT, YouTube, E-Hentai, and ExHentai. E
 | [Reddit Saved Button](src/reddit-saved-button/README.md)     | Add a save/unsave button after Share on Reddit posts.      | [Install][reddit-install]          |
 | [PTT Auto Media](src/ptt-auto-media/README.md)               | Display linked images and videos inline in PTT articles.   | [Install][ptt-install]             |
 | [YouTube Live Rewind](src/youtube-live-rewind/README.md)     | Enable the native DVR timeline for supported live streams. | [Install][youtube-install]         |
-| [E-Hentai Reader](src/e-hentai-reader/README.md)             | Zoom reader images and fit them to the reading area.       | [Install][eh-reader-install]       |
+| [E-Hentai Reader](src/e-hentai-reader/README.md)             | Zoom images, save view settings, and resume reading.       | [Install][eh-reader-install]       |
 
 [threads-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-saved-button/threads-saved-button.user.js
 [threads-country-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-country-label/threads-country-label.user.js
@@ -33,7 +33,7 @@ Installation and update URLs use the source files on `main`; those files must be
 
 ## Privacy and permissions
 
-All scripts use `@grant none` and `@noframes` and do not write to browser storage. Each script README describes its data sources, network requests, and site-specific limits.
+All scripts use `@grant none` and `@noframes`. Each script README describes its browser storage, data sources, network requests, and site-specific limits.
 
 ## Development
 

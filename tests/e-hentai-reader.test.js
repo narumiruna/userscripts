@@ -147,17 +147,12 @@ test("the exact installation source has standalone metadata and source update UR
     )
   expect(values("name")).toEqual(["E-Hentai Reader"])
   expect(values("namespace")).toEqual(["userscripts/e-hentai-reader"])
-  expect(values("version")).toEqual(["0.1.2"])
+  expect(values("version")).toEqual(["0.2.0"])
   expect(values("grant")).toEqual(["none"])
   expect(values("run-at")).toEqual(["document-idle"])
   expect(values("license")).toEqual(["AGPL-3.0-only"])
   expect(header[0]).toMatch(/^\/\/ @noframes\r?$/m)
-  expect(values("match")).toEqual([
-    "https://e-hentai.org/s/*",
-    "https://e-hentai.org/mpv/*",
-    "https://exhentai.org/s/*",
-    "https://exhentai.org/mpv/*",
-  ])
+  expect(values("match")).toEqual(["https://e-hentai.org/*", "https://exhentai.org/*"])
   expect(values("downloadURL")).toEqual([installUrl])
   expect(values("updateURL")).toEqual([installUrl])
   expect(() => new Script(source)).not.toThrow()
@@ -179,7 +174,7 @@ test.each([
   start()
   expect(doc.querySelectorAll("#eh-reader-toolbar")).toHaveLength(1)
   expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(false)
-  expect(doc.querySelectorAll("#eh-reader-toolbar button")).toHaveLength(5)
+  expect(doc.querySelectorAll("#eh-reader-toolbar button")).toHaveLength(7)
   expect(percent()).toBe("100%")
   expect(doc.documentElement.classList.contains("eh-reader-active")).toBe(false)
   expect(rules().some((rule) => rule.style.getPropertyValue("--ehr-width"))).toBe(false)
@@ -666,12 +661,9 @@ test.each([false, true])(
   },
 )
 
-test("does not use storage or network APIs during startup, interaction, refresh, or cleanup", async () => {
+test("uses only local storage and no network or credential APIs during the reader lifecycle", async () => {
   setup()
   const unused = []
-  for (const name of ["localStorage", "sessionStorage"]) {
-    unused.push(vi.spyOn(page, name, "get"))
-  }
   for (const name of [
     "fetch",
     "XMLHttpRequest",
@@ -704,6 +696,15 @@ test("does not use storage or network APIs during startup, interaction, refresh,
   for (const spy of unused) expect(spy).not.toHaveBeenCalled()
   expect(doc.getElementById("img").getAttribute("src")).toBe(imageSrc)
   expect(doc.querySelectorAll("script, link, iframe")).toHaveLength(0)
+  expect(Object.keys(page.localStorage).sort()).toEqual([
+    "eh-reader:preferences",
+    "eh-reader:progress:123",
+  ])
+  expect(JSON.parse(page.localStorage.getItem("eh-reader:preferences"))).toEqual({
+    mode: "native",
+    scale: 1,
+  })
+  expect(Object.keys(page.sessionStorage)).toHaveLength(0)
 })
 
 test("duplicate startup does not add handlers, and its cleanup does not stop the first instance", () => {
@@ -728,8 +729,9 @@ test("duplicate startup does not add handlers, and its cleanup does not stop the
   expect(key("+").defaultPrevented).toBe(false)
   expect(wheel().defaultPrevented).toBe(false)
   start()
-  key("+")
   expect(percent()).toBe("110%")
+  key("+")
+  expect(percent()).toBe("121%")
 })
 
 test("cleanup cancels a pending observer frame and disconnects all event and observer work", async () => {

@@ -50,9 +50,10 @@ The script preserves native page navigation, including arrow keys, Space, and un
 - An ordinary visit does not jump to a saved position. While resume is pending, startup, resizing, restored view settings, programmatic scrolling, and page exit do not replace it.
   - Select **繼續閱讀** to resume, or **從此處閱讀** to start at the current position.
   - Native reading input, such as ordinary scrolling, supported navigation keys, or page navigation, also selects the current position and dismisses the pending resume.
-- Resume links on gallery lists and gallery pages open the saved reader. Their `#eh-reader-resume` fragment requests an explicit resume and is removed after restoration. Ctrl/Meta/Shift-click keeps the browser's link behavior.
+- Resume links on gallery lists and gallery pages open the saved reader. Single-image links use `#eh-reader-resume`. MPV links use `?eh-reader-resume=1#pageN` so native startup can select the saved page without removing the resume request. After restoration, the script removes its marker and keeps MPV's native `#pageN` fragment. Ctrl/Meta/Shift-click keeps the browser's link behavior.
 - A single-image reader can navigate to the saved reader path. MPV can resume the saved page within its current viewer, even when the record came from a single-image reader.
 - MPV first scrolls to an unloaded target to let the native viewer load it. It applies the saved offset again after the image becomes available. A missing or failed target leaves the saved record unchanged; starting elsewhere cancels the pending restoration.
+  - After restoration, MPV keeps the saved page and offset through delayed native startup and image resizing. Passive updates do not replace that record. Reading input or an explicit view change releases the restored position. Native reading keys also work when a toolbar control has focus.
 - Native same-tab single-image links use a one-use `sessionStorage` handoff. It is bound to the destination path and is consumed on arrival, including same-document navigation. A later reload offers resume normally.
 - A progress update from another tab pauses local writes and offers the newer position without moving the current page. New local reading input can replace that position. Gallery links and saved-page badges update when storage changes.
 - Clear history cancels pending writes. Passive layout updates and page exit do not recreate the cleared record. New reading input can start a new record.
@@ -96,6 +97,18 @@ To remove page changes, disable the script and reload. Saved data remains until 
 Each native reader still loads images under its normal rules. Smaller images can put more pages in view. Explicit resume and normal navigation can cause the site to load the selected page and nearby images.
 
 ## Validation
+
+### Version 0.4.1
+
+Version 0.4.1 passed `npm run ci`: formatting, lint, JavaScript type checks, and all 780 Vitest/jsdom tests, including 238 reader tests. Full CI used an LF copy of the tracked source with the changed files applied; the existing CRLF checkout was preserved. Fifteen new reader cases cover gallery-to-MPV resume, fragment replacement before injection, delayed native resets, late image resizing, query cleanup, saved-page protection, scroll-loop prevention, and release through reading input, view controls, history clearing, and cross-tab updates.
+
+Headless Chromium 158.0.8127.18 checked the exact source with neutral images and the site's native MPV code on both origins. Twelve combinations covered native size, fit-width, and 10% manual scale, with injection before or after native startup. Gallery links restored page 17 and its relative offset within 0.003. Delayed resets and image replacement preserved the position and saved record. Checks also covered idle refresh behavior, toolbar-focused PageDown, physical wheel input, native D navigation, history clearing, retained preferences, and ordinary visits that leave resume pending. No page errors occurred.
+
+The existing neutral gallery checks also passed in headless Chrome 156.0.8078.80 on both origins at desktop and mobile sizes. They covered single-image resume, cross-tab updates, clear confirmation, tooltips, storage failures, and unchanged native gallery layout.
+
+The installed Violentmonkey source was updated to 0.4.1 and read back to confirm that it matches the repository source. The manager matched the new MPV resume URL on both origins. Existing live tabs were not reloaded.
+
+Live-gallery restoration was not verified. After installing the update, reload the gallery and reader pages, then select the saved-page resume control. Check that the page and vertical position remain correct after image loading. These fixture checks do not establish live-site or userscript-manager injection behavior.
 
 ### Version 0.4.0
 

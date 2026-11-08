@@ -279,7 +279,7 @@ test.each([false, true])(
     expect(saved()).toEqual(progress)
     expectPendingResume(
       9,
-      mpv ? "/mpv/123/gallery/#eh-reader-resume" : "/s/old/123-9#eh-reader-resume",
+      mpv ? "/mpv/123/gallery/?eh-reader-resume=1#page9" : "/s/old/123-9#eh-reader-resume",
     )
     expect(doc.documentElement.scrollTop).toBe(0)
     if (mpv) expect(doc.getElementById("pane_images").scrollTop).toBe(0)
@@ -369,8 +369,146 @@ test("MPV waits for a missing resume target and handles late placeholder inserti
   expect(page.location.hash).toBe("#eh-reader-resume")
   loadSecond()
   await settle()
-  expect(page.location.hash).toBe("")
+  expect(page.location.hash).toBe("#page2")
 })
+
+test.each(["e-hentai.org", "exhentai.org"])(
+  "gallery MPV resume survives native fragment normalization on %s",
+  async (hostname) => {
+    const progress = { page: 2, offset: 0.5, path: "/mpv/123/gallery/" }
+    setup({ hostname, path: "/g/123/gallery/", local: { [progressKey]: progress } })
+    start()
+    const href = control("resume").getAttribute("href")
+    expect(href).toBe("/mpv/123/gallery/?eh-reader-resume=1#page2")
+    // Native startup can replace the fragment before document-idle injection.
+    reopen(href.replace("#page2", "#page1"))
+    expect(doc.getElementById("pane_images").scrollTop).toBe(2620)
+    loadSecond()
+    await settle()
+    expectPendingResume(null)
+    expectPosition(2)
+    expect(page.location.search).toBe("")
+    expect(page.location.hash).toBe("#page2")
+    expect(saved()).toEqual(progress)
+  },
+)
+
+test.each(["e-hentai.org", "exhentai.org"])(
+  "MPV keeps the restored page and offset through delayed native startup on %s",
+  async (hostname) => {
+    const progress = { page: 2, offset: 0.5, path: "/mpv/123/gallery/" }
+    setup({
+      hostname,
+      path: "/mpv/123/gallery/#eh-reader-resume",
+      local: { [progressKey]: progress },
+    })
+    loadSecond()
+    start()
+    const pane = doc.getElementById("pane_images")
+    expect(pane.scrollTop).toBe(2620)
+    expectPendingResume(null)
+    pane.scrollTop = 0
+    pane.dispatchEvent(new page.Event("scroll"))
+    flush()
+    expect(saved()).toEqual(progress)
+    await settle()
+    expect(pane.scrollTop).toBe(2620)
+    expectPosition(2)
+    expect(page.location.hash).toBe("#page2")
+    loadSecond(700, 1400)
+    await settle()
+    expect(pane.scrollTop).toBe(2720)
+    expect(saved()).toEqual(progress)
+  },
+)
+
+test("MPV resume does not scroll a clamped viewport anchor back and forth during refresh", async () => {
+  setup({
+    path: "/mpv/123/gallery/?eh-reader-resume=1#page2",
+    local: {
+      [progressKey]: { page: 2, offset: 0.9, path: "/mpv/123/gallery/" },
+      [preferenceKey]: { mode: "manual", scale: 0.1 },
+    },
+  })
+  loadSecond()
+  start()
+  const pane = doc.getElementById("pane_images")
+  const before = pane.scrollTop
+  const scroll = vi.spyOn(pane, "scrollTop", "set")
+  page.dispatchEvent(new page.Event("resize"))
+  await settle()
+  expect(scroll).toHaveBeenCalledTimes(1)
+  expect(scroll).toHaveBeenCalledWith(before)
+})
+
+test("MPV preserves the requested progress when the viewport center falls on another page", () => {
+  setup({
+    path: "/mpv/123/gallery/?eh-reader-resume=1#page1",
+    local: { [progressKey]: { page: 1, offset: 0.95, path: "/s/saved/123-1" } },
+  })
+  loadSecond()
+  start()
+  expect(doc.getElementById("pane_images").scrollTop).toBe(1896)
+  expect(saved()).toEqual({ page: 1, offset: 0.95, path: "/mpv/123/gallery/" })
+  flush()
+  expect(saved()).toEqual({ page: 1, offset: 0.95, path: "/mpv/123/gallery/" })
+})
+
+test("MPV removes only its resume query marker and preserves native navigation state", async () => {
+  setup({
+    path: "/mpv/123/gallery/?example=value&eh-reader-resume=1#page2",
+    local: { [progressKey]: { page: 2, offset: 0.5, path: "/mpv/123/gallery/" } },
+  })
+  start()
+  loadSecond()
+  await settle()
+  expect(page.location.search).toBe("?example=value")
+  expect(page.location.hash).toBe("#page2")
+  reopen("/mpv/123/gallery/?example=value#page2")
+  expect(doc.getElementById("pane_images").scrollTop).toBe(0)
+  expectPendingResume(2, "/mpv/123/gallery/?eh-reader-resume=1#page2")
+})
+
+test.each(["wheel", "keydown", "toolbar-keydown", "click", "width", "in", "clear", "storage"])(
+  "MPV releases the restored position after %s",
+  async (input) => {
+    setup({
+      path: "/mpv/123/gallery/#eh-reader-resume",
+      local: { [progressKey]: { page: 2, offset: 0.5, path: "/mpv/123/gallery/" } },
+    })
+    loadSecond()
+    start()
+    const pane = doc.getElementById("pane_images")
+    if (input === "wheel") {
+      pane.dispatchEvent(new page.WheelEvent("wheel", { bubbles: true, deltaY: -100 }))
+    } else if (input === "keydown") {
+      pane.dispatchEvent(new page.KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }))
+    } else if (input === "toolbar-keydown") {
+      control("clear").focus()
+      control("clear").dispatchEvent(
+        new page.KeyboardEvent("keydown", { bubbles: true, key: "PageDown" }),
+      )
+    } else if (input === "click") {
+      doc.getElementById("image_1").click()
+    } else if (input === "clear") {
+      page.confirm = () => true
+      control("clear").click()
+    } else if (input === "storage") {
+      changeProgress({ page: 1, offset: 0.1, path: "/s/other/123-1" })
+    } else {
+      control(input).click()
+    }
+    pane.scrollTop = 0
+    pane.dispatchEvent(new page.Event("scroll"))
+    await settle()
+    expect(pane.scrollTop).toBe(0)
+    flush()
+    if (input === "clear") expect(saved()).toBeNull()
+    else if (input === "storage")
+      expect(saved()).toEqual({ page: 1, offset: 0.1, path: "/s/other/123-1" })
+    else expect(saved().page).toBe(1)
+  },
+)
 
 test("native same-tab single-image navigation continues tracking with a destination-bound, one-use handoff", () => {
   setup({ local: { [progressKey]: { page: 1, offset: 0.4, path: "/s/token/123-1" } } })
@@ -519,7 +657,12 @@ test.each([false, true])(
         new page.StorageEvent("storage", { key: progressKey, newValue: JSON.stringify(progress) }),
       )
       await settle()
-      expectPendingResume(number, `${mpv ? "/mpv/123/gallery/" : progress.path}#eh-reader-resume`)
+      expectPendingResume(
+        number,
+        mpv
+          ? `/mpv/123/gallery/?eh-reader-resume=1#page${number}`
+          : `${progress.path}#eh-reader-resume`,
+      )
       expect(control("resume").querySelector("svg")).not.toBeNull()
       expect(control("start").closest(".eh-reader-resume-group")).toBe(
         control("resume").closest(".eh-reader-resume-group"),
@@ -908,20 +1051,20 @@ test.each(["e-hentai.org", "exhentai.org"])(
     })
     const write = vi.spyOn(page.Storage.prototype, "setItem")
     start()
-    expectGalleryResume(18, "/mpv/123/gallery/#eh-reader-resume")
+    expectGalleryResume(18, "/mpv/123/gallery/?eh-reader-resume=1#page18")
     doc.body.insertAdjacentHTML(
       "afterbegin",
       `<h1 id="gn">Example gallery</h1>${listing}<a class="glink" href="/g/456/other/">Other gallery</a>`,
     )
     await settle()
-    expectGalleryResume(18, "/mpv/123/gallery/#eh-reader-resume")
+    expectGalleryResume(18, "/mpv/123/gallery/?eh-reader-resume=1#page18")
     const badges = doc.querySelectorAll(".eh-reader-progress")
     expect(badges).toHaveLength(1)
     expect(badges[0].getAttribute("href")).toBe("/s/other/456-2#eh-reader-resume")
     expect(badges[0].previousElementSibling.textContent).toBe("Other gallery")
     doc.getElementById("gn").replaceWith(doc.createElement("h1"))
     await settle()
-    expectGalleryResume(18, "/mpv/123/gallery/#eh-reader-resume")
+    expectGalleryResume(18, "/mpv/123/gallery/?eh-reader-resume=1#page18")
     expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
     expect(write).not.toHaveBeenCalled()
   },
@@ -994,7 +1137,12 @@ test("cross-tab gallery progress updates the numeric badge, href and open toolti
   ]) {
     changeProgress({ page: number, offset: 0.3, path })
     await settle()
-    expectGalleryResume(number, `${path}#eh-reader-resume`)
+    expectGalleryResume(
+      number,
+      path.startsWith("/mpv/")
+        ? `${path}?eh-reader-resume=1#page${number}`
+        : `${path}#eh-reader-resume`,
+    )
     expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(false)
     control("resume").focus()
     const tooltip = doc.getElementById("eh-reader-tooltip")
@@ -1184,7 +1332,7 @@ test("dynamic result href and title changes update badges and dock visibility wi
   await settle()
   expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
   expect(doc.querySelector(".eh-reader-progress").getAttribute("href")).toBe(
-    "/mpv/456/other/#eh-reader-resume",
+    "/mpv/456/other/?eh-reader-resume=1#page2",
   )
   result.textContent = ""
   await settle()

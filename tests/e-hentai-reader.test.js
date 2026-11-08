@@ -170,7 +170,7 @@ test("the exact installation source has standalone metadata and source update UR
     )
   expect(values("name")).toEqual(["E-Hentai Reader"])
   expect(values("namespace")).toEqual(["userscripts/e-hentai-reader"])
-  expect(values("version")).toEqual(["0.4.0"])
+  expect(values("version")).toEqual(["0.4.1"])
   expect(values("grant")).toEqual(["none"])
   expect(values("run-at")).toEqual(["document-idle"])
   expect(values("license")).toEqual(["AGPL-3.0-only"])

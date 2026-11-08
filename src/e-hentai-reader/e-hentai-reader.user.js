@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         E-Hentai Reader
 // @namespace    userscripts/e-hentai-reader
-// @version      0.4.0
+// @version      0.4.1
 // @description  Zoom reader images, remember view settings, and resume reading from locally saved progress.
 // @match        https://e-hentai.org/*
 // @match        https://exhentai.org/*
@@ -25,7 +25,8 @@
   const preferenceKey = "eh-reader:preferences"
   const progressPrefix = "eh-reader:progress:"
   const continuationKey = "eh-reader:continue"
-  const resumeHash = "#eh-reader-resume"
+  const resumeParameter = "eh-reader-resume"
+  const resumeHash = `#${resumeParameter}`
   let storageError = false
   if (document.getElementById(toolbarId)) return () => {}
 
@@ -86,6 +87,30 @@
     const target = readerLocation(value.path)
     if (!target || target.id !== id || (!target.mpv && target.page !== value.page)) return null
     return { page: value.page, offset: value.offset, path: value.path }
+  }
+
+  /** @param {Progress} progress @param {string} [path] */
+  function resumeHref(progress, path = progress.path) {
+    return (
+      path + (readerLocation(path)?.mpv ? `?${resumeParameter}=1#page${progress.page}` : resumeHash)
+    )
+  }
+
+  function wantsResume() {
+    return (
+      location.hash === resumeHash ||
+      (readerLocation(location.pathname)?.mpv &&
+        new URLSearchParams(location.search).get(resumeParameter) === "1")
+    )
+  }
+
+  function clearResumeRequest() {
+    const url = new URL(location.href)
+    if (url.hash === resumeHash) url.hash = ""
+    if (readerLocation(url.pathname)?.mpv && url.searchParams.get(resumeParameter) === "1")
+      url.searchParams.delete(resumeParameter)
+    if (url.href !== location.href)
+      history.replaceState(history.state, "", url.pathname + url.search + url.hash)
   }
 
   function clearProgress() {
@@ -499,7 +524,7 @@
       resume.hidden = resumeGroup.hidden = !progress
       if (progress) {
         resume.setAttribute("aria-label", `繼續閱讀：第 ${progress.page} 頁`)
-        const href = progress.path + resumeHash
+        const href = resumeHref(progress)
         if (resume.getAttribute("href") !== href) resume.setAttribute("href", href)
         if (pageBadge.textContent !== String(progress.page))
           pageBadge.textContent = String(progress.page)
@@ -535,7 +560,7 @@
         if (target.nextSibling !== badge) target.after(badge)
         const text = `繼續閱讀：第 ${progress.page} 頁`
         if (badge.textContent !== text) badge.textContent = text
-        const href = progress.path + resumeHash
+        const href = resumeHref(progress)
         if (badge.getAttribute("href") !== href) badge.setAttribute("href", href)
       }
       toolbar.hidden = !progress && badges.size === 0 && !storageError
@@ -607,7 +632,9 @@
   let manualScale = mode === "manual" ? preference.scale : 1
   let pendingProgress = continuing ? null : readProgress(gallery.id)
   let recording = !pendingProgress
-  let resumeRequested = location.hash === resumeHash
+  let resumeRequested = wantsResume()
+  /** @type {Progress | null} */
+  let restoredProgress = null
   let progressTimer = 0
   let frame = 0
   let stopped = false
@@ -824,7 +851,7 @@
     if (pendingProgress) {
       const text = `繼續閱讀：第 ${pendingProgress.page} 頁`
       resume.setAttribute("aria-label", text)
-      const href = (mpv ? gallery.path : pendingProgress.path) + resumeHash
+      const href = resumeHref(pendingProgress, mpv ? gallery.path : pendingProgress.path)
       if (resume.getAttribute("href") !== href) resume.setAttribute("href", href)
     }
     if (storageError) showStatus("無法使用本機儲存；變更不會保存。")
@@ -833,7 +860,8 @@
 
   function refresh() {
     syncLocation()
-    const anchor = mode === "native" ? null : anchorFor(currentPage())
+    const anchor =
+      mode === "native" || resumeRequested || restoredProgress ? null : anchorFor(currentPage())
     const bounds = view()
     /** @type {Map<HTMLElement, Page>} */
     const next = new Map()
@@ -866,7 +894,7 @@
     pages = next
     render()
     restoreAnchor(anchor)
-    if (resumeRequested) resumeProgress()
+    if (resumeRequested || restoredProgress) resumeProgress()
     scheduleProgress()
   }
 
@@ -880,6 +908,7 @@
 
   /** @param {number} scale @param {Anchor | null} anchor */
   function zoomTo(scale, anchor) {
+    restoredProgress = null
     mode = "manual"
     manualScale = clampScale(scale)
     render()
@@ -900,6 +929,7 @@
         pendingProgress = null
         recording = false
         resumeRequested = false
+        restoredProgress = null
         clearTimeout(progressTimer)
         showStatus("已清除本站閱讀紀錄。", true)
       }
@@ -909,6 +939,7 @@
     refresh()
     const page = currentPage()
     if (!page) return
+    restoredProgress = null
     const anchor = anchorFor(page)
     if (action === "in" || action === "out") {
       zoomTo(scaleFor(page) * (action === "in" ? 1.1 : 1 / 1.1), anchor)
@@ -1015,7 +1046,8 @@
         pendingProgress = null
         recording = true
       }
-      resumeRequested = location.hash === resumeHash
+      resumeRequested = wantsResume()
+      restoredProgress = null
       updateControls()
     }
     return true
@@ -1048,7 +1080,7 @@
     progressTimer = 0
     if (stopped || !syncLocation()) return
     const page = currentPage()
-    if (!recording || !page) return
+    if (!recording || restoredProgress || !page) return
     const rect = readingRect(page)
     const number = pageNumber(page)
     const bounds = view()
@@ -1066,7 +1098,7 @@
   }
 
   function scheduleProgress() {
-    if (!recording || stopped) return
+    if (!recording || restoredProgress || stopped) return
     clearTimeout(progressTimer)
     progressTimer = window.setTimeout(saveProgress, 300)
   }
@@ -1075,30 +1107,46 @@
     if (!pages.size) return
     pendingProgress = null
     resumeRequested = false
+    restoredProgress = null
     recording = true
-    if (location.hash === resumeHash) {
-      history.replaceState(history.state, "", location.pathname + location.search)
-    }
+    clearResumeRequest()
     updateControls()
     scheduleProgress()
   }
 
   function resumeProgress() {
-    if (!pendingProgress) return
+    const progress = pendingProgress ?? restoredProgress
+    if (!progress) return
     const target = mpv
-      ? [...pages.values()].find((page) => pageNumber(page) === pendingProgress?.page)
-      : gallery.page === pendingProgress.page
+      ? [...pages.values()].find((page) => pageNumber(page) === progress.page)
+      : gallery.page === progress.page
         ? currentPage()
         : null
     if (!target) return
     const rect = readingRect(target)
     if (!(rect.height > 0)) return
     const scroller = view().pane ?? document.scrollingElement ?? document.documentElement
-    scroller.scrollTop += rect.top + rect.height * pendingProgress.offset - view().top - 4
+    scroller.scrollTop += rect.top + rect.height * progress.offset - view().top - 4
     // Scrolling an MPV placeholder triggers native loading. Its final size can differ.
     if (mpv && !target.image?.isConnected) return
+    if (mpv && location.hash !== `#page${progress.page}`)
+      history.replaceState(
+        history.state,
+        "",
+        `${location.pathname}${location.search}#page${progress.page}`,
+      )
+    if (restoredProgress) {
+      updateControls()
+      return
+    }
     beginReading()
-    saveProgress()
+    if (mpv) {
+      // Native startup and late image layout must not replace an explicit resume.
+      // Keep its anchor until reading input or a view control selects a new position.
+      restoredProgress = progress
+      writeStored(progressPrefix + gallery.id, { ...progress, path: gallery.path })
+      updateControls()
+    } else saveProgress()
   }
 
   /** @param {Event} event */
@@ -1106,7 +1154,9 @@
     if (
       event.defaultPrevented ||
       isEditable(event.target) ||
-      (event.target instanceof Node && toolbar.contains(event.target))
+      (event.target instanceof Node &&
+        toolbar.contains(event.target) &&
+        (!restoredProgress || !(event instanceof KeyboardEvent)))
     )
       return
     if (!syncLocation()) return
@@ -1194,6 +1244,7 @@
         pendingProgress = event.newValue === null ? null : readProgress(gallery.id)
         recording = false
         resumeRequested = false
+        restoredProgress = null
         clearTimeout(progressTimer)
         updateControls()
       }
@@ -1208,8 +1259,11 @@
   document.addEventListener(
     "scroll",
     () => {
-      updateControls()
-      scheduleProgress()
+      if (restoredProgress) scheduleRefresh()
+      else {
+        updateControls()
+        scheduleProgress()
+      }
     },
     { capture: true, passive: true, signal },
   )

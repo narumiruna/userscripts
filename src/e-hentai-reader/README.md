@@ -2,7 +2,7 @@
 
 Zoom reader images, save view settings, and resume from a locally saved reading position. Gallery lists and gallery pages show a resume link when a saved position is available.
 
-[Source](e-hentai-reader.user.js) · [Shared installation instructions](../../README.md#install).
+[Source](e-hentai-reader.user.js) · [Toolbar design preview](toolbar-preview.html) · [Shared installation instructions](../../README.md#install).
 
 ## Setup
 
@@ -16,18 +16,27 @@ Site access and MPV must already be available to the account. The script does no
 
 ## Controls
 
-| Control                            | Result                                                                                  |
-| ---------------------------------- | --------------------------------------------------------------------------------------- |
-| Ctrl + wheel up/down over an image | Increase/decrease image size around the pointer.                                        |
-| `+` or `=` / `-`                   | Multiply/divide image size by 1.1 around the reading-area center.                       |
-| **適寬** / Shift + W               | Fit each page to the reading-area width. Show the start of the current page.            |
-| **適高** / Shift + H               | Fit each page to the reading-area height. Leave space for the controls.                 |
-| **重設** / `0`                     | Restore the site's image dimensions and save native size as the view preference.        |
-| **繼續閱讀：第 N 頁**              | Resume the saved page and relative vertical position.                                   |
-| **從此處閱讀**                     | Replace the pending saved position with the current position, without a jump.           |
-| **清除紀錄** / **清除閱讀紀錄**    | After confirmation, remove this site's saved reading history. Keep the view preference. |
+The reader toolbar is a 64 px wide vertical column at the lower-right corner. Each icon control is 44 × 44 px. The page number and scale remain numeric. Gallery pages keep their text controls.
 
-The toolbar shows the current page and scale. Manual scaling uses a common factor for all MPV pages. Fit modes calculate a separate factor for each page. The scale range is 10–800%; images outside this range cannot fit exactly.
+| Control                                     | Result                                                                                  |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Ctrl + wheel up/down over an image          | Increase/decrease image size around the pointer.                                        |
+| Plus / minus icons or `+` / `=` / `-`       | Multiply/divide image size by 1.1 around the reading-area center.                       |
+| Horizontal-arrow icon / Shift + W           | Fit each page to the reading-area width. Show the start of the current page.            |
+| Vertical-arrow icon / Shift + H             | Fit each page to the reading-area height. Leave space for the controls.                 |
+| Counterclockwise-arrow icon / `0`           | Restore the site's image dimensions and save native size as the view preference.        |
+| Bookmark-and-arrow icon                     | Resume the saved page and relative vertical position.                                   |
+| Location-pin icon                           | Replace the pending saved position with the current position, without a jump.           |
+| Trash-can icon / gallery clear-history text | After confirmation, remove this site's saved reading history. Keep the view preference. |
+
+- Hover over an icon or focus it with Tab to show its name and shortcut on the left. Press Escape to close the tooltip.
+- Resume and start-here icons appear only while resume is pending. The resume tooltip includes the saved page number.
+- On short viewports, scroll inside the toolbar or use Tab to reach its controls. Tooltips remain outside the scroll area.
+- Storage errors and clear-history notices appear to the left without changing the toolbar width.
+  - Clear-history notices close after 2.8 seconds. Storage errors remain visible.
+- Icons use inline SVG. They do not require external fonts or image requests.
+
+Manual scaling uses a common factor for all MPV pages. Fit modes calculate a separate factor for each page. The scale range is 10–800%; images outside this range cannot fit exactly.
 
 The script preserves native page navigation, including arrow keys, Space, and unmodified W/A/S/D. Keyboard zoom shortcuts do not operate in input fields or editable content. Ctrl + `+`/`-`/`0` remain browser shortcuts. Ctrl + wheel outside a reader image keeps its browser behavior.
 
@@ -83,6 +92,16 @@ To remove page changes, disable the script and reload. Saved data remains until 
 Each native reader still loads images under its normal rules. Smaller images can put more pages in view. Explicit resume and normal navigation can cause the site to load the selected page and nearby images.
 
 ## Validation
+
+### Version 0.3.0
+
+Version 0.3.0 passed `npm run ci`: formatting, lint, JavaScript type checks, and all 724 Vitest/jsdom tests, including 182 reader tests. The full check used a separate LF worktree because the primary Windows checkout uses CRLF. New cases cover icon labels, numeric page display, control groups and sizes, SVG click targets, dynamic resume tooltips, pointer and keyboard focus, Escape, short-height scrolling, hidden or disabled controls, status expiry, observer stability, and cleanup.
+
+Headless Chrome 156.0.8078.80 checks used neutral intercepted fixtures and the site's native `ehg_mpv.c.js` code. They passed on both site origins and reader types at 1440 × 960, 390 × 844, and 320 × 480 px. They verified the 64 px dock, 44 px controls, tooltip bounds, Tab access after automatic toolbar scrolling, fit states, cross-document single-image resume, MPV resume, physical Ctrl + wheel input, native wheel and D navigation, confirmation cancellation, history clearing, retained preferences, and cleanup. A separate 320 × 568 px case verified readable storage-error messages and working zoom. No page errors occurred.
+
+These checks did not use live galleries or userscript-manager injection.
+
+### Earlier validation
 
 Version 0.2.1 passed JavaScript type checks and all 706 repository Vitest/jsdom tests, including eight new gallery-placement regression cases. The reader tests load the exact installation source. They cover both sites and reader types, persistent view settings, explicit resume, delayed MPV loading and resizing, single-image navigation, storage validation and failure, cross-tab changes, history clearing, gallery indicators, and the existing zoom behavior.
 

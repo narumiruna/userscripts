@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>E-Hentai Reader · 直式工具列預覽</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #e6e7ea;
+        background: #191a1d;
+        --muted: #989ba5;
+        --accent: #a8c7fa;
+        --border: #ffffff14;
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+      button { font: inherit; cursor: pointer; }
+      button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      button:disabled { opacity: 0.3; cursor: default; }
+      svg.icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+      .icon-definitions { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+      .preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 16px;
+        padding: 20px 32px;
+        border-bottom: 1px solid var(--border);
+        background: #1e1f22;
+      }
+      .header-title { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+      .header-title strong { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+      .preview-badge { padding: 2px 8px; border: 1px solid #a8c7fa30; border-radius: 5px; color: var(--accent); font-size: 11px; }
+      .header-note { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+      .scenarios { display: flex; gap: 4px; min-inline-size: 0; margin: 0; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: #17181b; }
+      .scenarios button { padding: 7px 14px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; }
+      .scenarios button[aria-pressed="true"] { color: #f1f3f7; background: #35373e; box-shadow: 0 1px 3px #0003; }
+      .scenarios button:hover { color: #f1f3f7; }
+
+      main { display: grid; grid-template-columns: 256px minmax(0, 1fr); gap: 36px; min-height: 0; padding: 30px 112px 24px 36px; }
+      .design-notes { padding-top: 28px; }
+      .eyebrow { margin: 0 0 10px; color: var(--accent); font-size: 11px; font-weight: 600; letter-spacing: 0.16em; }
+      h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: 0.04em; }
+      .summary { margin: 14px 0 30px; color: #b4b6bf; line-height: 1.9; }
+      .note-list { display: grid; gap: 22px; margin: 0; padding: 0; list-style: none; }
+      .note-list li { display: flex; gap: 12px; }
+      .note-icon { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 9px; color: #c3c7d0; background: #212226; }
+      .note-icon .icon { width: 17px; height: 17px; }
+      .note-list strong { display: block; margin: 2px 0 3px; font-size: 13px; font-weight: 500; }
+      .note-list p { margin: 0; font-size: 12px; color: var(--muted); }
+      .state-note { margin-top: 30px; padding: 14px 0; border-top: 1px solid var(--border); }
+      .state-note strong { color: #c4c7d0; font-size: 11px; font-weight: 500; }
+      .state-note p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+
+      .reader-viewport { min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #4b4d55 transparent; border-radius: 8px; background: #151619; }
+      .page-wrap { display: grid; justify-items: center; gap: 14px; min-width: 100%; width: max-content; padding: 24px; }
+      .page-caption { margin: 0; color: #7e828c; font-size: 11px; letter-spacing: 0.08em; }
+      .paper { width: 560px; flex: none; background: #f4f1e9; box-shadow: 0 4px 28px #0004; }
+      .paper > svg { display: block; width: 100%; height: auto; }
+      .reader-footnote { margin: 0; color: #7e828c; font-size: 11px; }
+
+      .dock {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        z-index: 10;
+        width: 64px;
+        min-inline-size: 0;
+        max-height: calc(100dvh - 144px);
+        margin: 0;
+        padding: 9px;
+        border: 1px solid #484b52;
+        border-radius: 14px;
+        background: #25262a;
+        box-shadow: 0 8px 32px #0005, 0 1px 3px #0006;
+      }
+      .dock-scroll { max-height: calc(100dvh - 164px); overflow-y: auto; scrollbar-width: none; }
+      .dock-scroll::-webkit-scrollbar { display: none; }
+      .control-group { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+      .icon-button { display: grid; place-items: center; width: 44px; height: 44px; flex: none; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #c5c8d0; transition: background 120ms, color 120ms; }
+      .icon-button:hover:not(:disabled) { background: #373940; color: #fff; }
+      .icon-button:focus-visible { outline-offset: -3px; }
+      .icon-button[aria-pressed="true"] { border-color: #a8c7fa26; background: #a8c7fa1c; color: #c1d8ff; }
+      .icon-button[data-action="resume"] { color: var(--accent); }
+      .icon-button[data-action="clear"] { color: #9da1ac; }
+      .icon-button[data-action="clear"]:hover { background: #ed8e8e19; color: #f1a3a3; }
+      .divider { display: block; height: 1px; margin: 7px 6px; background: #ffffff13; }
+      .page-position { display: flex; justify-content: center; align-items: center; gap: 4px; height: 30px; color: #b6bac5; font-size: 12px; font-variant-numeric: tabular-nums; }
+      .page-position .icon { width: 14px; height: 14px; }
+      .scale { display: block; width: 100%; padding: 2px 0; color: #e8eaf0; font-size: 11px; font-weight: 500; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+
+      .tooltip { position: fixed; z-index: 20; display: flex; align-items: center; gap: 16px; width: max-content; max-width: calc(100vw - 108px); padding: 8px 11px; border: 1px solid #4c4f58; border-radius: 7px; background: #303239; color: #f1f3f7; box-shadow: 0 4px 16px #0004; font-size: 12px; pointer-events: none; }
+      .tooltip kbd { color: #b4b9c5; font: 11px/1.4 system-ui, sans-serif; white-space: nowrap; }
+      .toast { position: fixed; right: 104px; bottom: 28px; z-index: 15; max-width: min(340px, calc(100vw - 128px)); margin: 0; padding: 11px 15px; border: 1px solid #4a4e58; border-radius: 10px; background: #2b2e35; color: #dce4f2; box-shadow: 0 4px 20px #0004; font-size: 12px; }
+      dialog { width: min(380px, calc(100vw - 40px)); padding: 24px; border: 1px solid #484b52; border-radius: 14px; background: #25262a; color: #e6e7ea; box-shadow: 0 16px 64px #0006; }
+      dialog::backdrop { background: #0008; }
+      dialog h2 { margin: 0 0 10px; font-size: 18px; }
+      .dialog-description { color: #b4b6bf; font-size: 13px; }
+      .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+      .dialog-actions button { padding: 7px 14px; border: 1px solid #50535b; border-radius: 7px; background: #36383f; color: #e6e7ea; }
+      .dialog-actions .confirm { border-color: #e6a2a240; background: #623e42; color: #ffe1e1; }
+
+      @media (max-width: 900px) {
+        .preview-header { padding: 16px 20px; }
+        main { grid-template-columns: minmax(0, 1fr); padding: 18px 100px 18px 20px; }
+        .design-notes { display: none; }
+        .dock { right: 18px; bottom: 18px; }
+      }
+      @media (max-width: 520px) {
+        .preview-header { gap: 12px; padding: 14px 16px; }
+        .header-title { gap: 8px; }
+        .header-title strong { font-size: 13px; }
+        .header-note { font-size: 11px; }
+        .scenarios button { padding: 5px 10px; }
+        main { padding: 12px 88px 12px 12px; }
+        .dock { right: 12px; bottom: 12px; max-height: calc(100dvh - 150px); }
+        .dock-scroll { max-height: calc(100dvh - 170px); }
+        .page-wrap { padding: 16px; }
+        .toast { right: 88px; bottom: 16px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .icon-button { transition: none; }
+      }
+      [hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+        <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" /></symbol>
+        <symbol id="i-width" viewBox="0 0 24 24"><path d="M4 4v16M20 4v16M8 12h8m-5-3-3 3 3 3m2-6 3 3-3 3" /></symbol>
+        <symbol id="i-height" viewBox="0 0 24 24"><path d="M4 4h16M4 20h16M12 8v8m-3-5 3-3 3 3m-6 2 3 3 3-3" /></symbol>
+        <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 4v5h5M3.6 9a8.5 8.5 0 1 1 .5 7" /></symbol>
+        <symbol id="i-page" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5" /></symbol>
+        <symbol id="i-resume" viewBox="0 0 24 24"><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16l-6-4zM9 10h6m-3-3 3 3-3 3" /></symbol>
+        <symbol id="i-pin" viewBox="0 0 24 24"><path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0z" /><circle cx="12" cy="10" r="2.3" /></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M5 6l1 14a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-14M10 10v7M14 10v7" /></symbol>
+        <symbol id="i-cursor" viewBox="0 0 24 24"><path d="m5 3 15 9-7 1-4 7zM13 13l5 7" /></symbol>
+      </defs>
+    </svg>
+
+    <header class="preview-header">
+      <div>
+        <div class="header-title"><strong>E-Hentai Reader</strong><span class="preview-badge">工具列外觀預覽</span></div>
+        <p class="header-note">獨立 HTML，不會修改 userscript 或實際閱讀紀錄。</p>
+      </div>
+      <fieldset class="scenarios" aria-label="切換預覽狀態">
+        <button type="button" data-scenario="reading" aria-pressed="true">一般閱讀</button>
+        <button type="button" data-scenario="pending" aria-pressed="false">有待續紀錄</button>
+      </fieldset>
+    </header>
+
+    <main>
+      <aside class="design-notes" aria-label="設計說明">
+        <p class="eyebrow">READER CONTROLS / 01</p>
+        <h1>直式工具列</h1>
+        <p class="summary">操作收進右下角的單欄，<br />減少遮住圖片的橫向範圍。</p>
+        <ul class="note-list">
+          <li><span class="note-icon"><svg class="icon" aria-hidden="true"><use href="#i-width" /></svg></span><div><strong>圖示取代操作文字</strong><p>縮放、適寬、適高與重設分組排列。</p></div></li>
+          <li><span class="note-icon"><svg class="icon" aria-hidden="true"><use href="#i-cursor" /></svg></span><div><strong>停留時顯示說明</strong><p>滑鼠停留或鍵盤聚焦時，<br />在左側顯示功能與快捷鍵。</p></div></li>
+          <li><span class="note-icon"><svg class="icon" aria-hidden="true"><use href="#i-page" /></svg></span><div><strong>數字資訊保留</strong><p>頁碼與縮放比例仍直接顯示，<br />不需要逐一查看圖示說明。</p></div></li>
+        </ul>
+        <div class="state-note"><strong>目前預覽狀態</strong><p id="scenario-description">一般閱讀：隱藏兩個待續操作。</p></div>
+      </aside>
+
+      <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The scrollable reader region must support keyboard scrolling. -->
+      <section id="reader-viewport" class="reader-viewport" aria-label="中性圖片閱讀示意區" tabindex="0">
+        <div class="page-wrap">
+          <p class="page-caption">READING PREVIEW · <span id="caption-page">12</span></p>
+          <div id="paper" class="paper">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 870" role="img" aria-labelledby="sample-title">
+              <title id="sample-title">中性風景分鏡，僅用於示意閱讀畫面</title>
+              <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse"><path d="m0 6 6-6" stroke="#a5a49c" stroke-width="0.6" /></pattern></defs>
+              <path fill="#f4f1e9" d="M0 0h600v870H0z" />
+              <g stroke="#444744" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round">
+                <path fill="#e5e5dc" d="M24 24h552v344H24z" />
+                <circle cx="465" cy="93" r="34" fill="#f8f6ef" stroke="none" />
+                <path fill="#c2c5bd" d="m24 251 95-102 83 71 104-139 132 151 63-63 75 74v125H24z" />
+                <path fill="#d9dcd2" d="m210 208 96-127 36 41-29-9-16 33-19-9-27 49z" stroke="none" />
+                <path fill="#a6ada2" d="m24 306 94-71 87 44 121-73 122 71 67-44 61 37v98H24z" />
+                <path fill="#e3e4d9" d="M24 335c115-27 173 17 263 5s162-46 289-8v36H24z" />
+                <path d="M58 86h96m-75 10h48m220-36h58M43 350h150m276-3h83" stroke="#8c9188" stroke-width="1" />
+                <path fill="#dadbd3" d="M24 388h266v213H24z" />
+                <path fill="#f4f1e9" d="M40 404h234v114H40z" />
+                <path d="M155 404v114M40 463h234M24 551h266" />
+                <path fill="#eeeee5" d="M107 510h72l-6 63h-60z" />
+                <path d="M179 519h12a17 17 0 0 1 0 34h-16M129 493c-12-13 10-20-1-33m22 33c-12-13 10-20-1-33" />
+                <path fill="#e3e4da" d="M310 388h266v213H310z" />
+                <path fill="url(#hatch)" d="M327 405h232v180H327z" stroke="none" />
+                <path fill="#f4f1e9" d="M369 566h142v18H369zM379 545h113v21H379zM374 523h124v22H374z" />
+                <path fill="#c0c6b8" d="M449 464c-37 4-54-11-53-34 33-2 52 7 53 34zm0-12c-1-33 17-51 45-48-2 27-16 45-45 48z" />
+                <path d="M449 434v72" />
+                <path fill="#dbddd1" d="M426 490h49l-7 33h-35z" />
+                <path fill="#d4d8ce" d="M24 621h552v204H24z" />
+                <path fill="#aab3a5" d="m24 705 83-34 94 21 83-40 112 39 92-33 88 41v126H24z" />
+                <path fill="#eaebe1" d="M283 825c-67-72 85-114 25-153h29c91 50-51 82 26 153z" />
+                <path d="M59 722v72m-14-43 14-22 15 22M501 713v87m-20-52 20-24 20 24M102 782h72m252 18h45" stroke="#65735f" />
+              </g>
+              <text x="300" y="851" fill="#72766f" text-anchor="middle" font-size="12" font-family="system-ui, sans-serif">READER LAYOUT SAMPLE</text>
+            </svg>
+          </div>
+          <p class="reader-footnote">中性示意圖 · 按鈕可操作，僅模擬介面</p>
+        </div>
+      </section>
+    </main>
+
+    <fieldset id="reader-dock" class="dock" aria-label="閱讀控制：直式圖示預覽">
+      <div class="dock-scroll">
+        <div id="page-position" class="page-position" role="status" aria-label="目前第 12 頁" title="目前第 12 頁"><svg class="icon" aria-hidden="true"><use href="#i-page" /></svg><span id="page-number">12</span></div>
+        <span class="divider" aria-hidden="true"></span>
+        <div class="control-group">
+          <button type="button" class="icon-button" data-action="in" aria-label="放大圖片" data-shortcut="+"><svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg></button>
+          <output id="scale" class="scale" aria-label="圖片縮放比例" aria-live="polite">100%</output>
+          <button type="button" class="icon-button" data-action="out" aria-label="縮小圖片" data-shortcut="−"><svg class="icon" aria-hidden="true"><use href="#i-minus" /></svg></button>
+        </div>
+        <span class="divider" aria-hidden="true"></span>
+        <div class="control-group">
+          <button type="button" class="icon-button" data-action="width" aria-label="適合寬度" aria-pressed="false" data-shortcut="Shift + W"><svg class="icon" aria-hidden="true"><use href="#i-width" /></svg></button>
+          <button type="button" class="icon-button" data-action="height" aria-label="適合高度" aria-pressed="false" data-shortcut="Shift + H"><svg class="icon" aria-hidden="true"><use href="#i-height" /></svg></button>
+          <button type="button" class="icon-button" data-action="reset" aria-label="還原原站圖片尺寸" data-shortcut="0"><svg class="icon" aria-hidden="true"><use href="#i-reset" /></svg></button>
+        </div>
+        <div id="resume-controls" hidden>
+          <span class="divider" aria-hidden="true"></span>
+          <div class="control-group">
+            <button type="button" class="icon-button" data-action="resume" aria-label="繼續閱讀：第 18 頁"><svg class="icon" aria-hidden="true"><use href="#i-resume" /></svg></button>
+            <button type="button" class="icon-button" data-action="start" aria-label="從此處閱讀"><svg class="icon" aria-hidden="true"><use href="#i-pin" /></svg></button>
+          </div>
+        </div>
+        <span class="divider" aria-hidden="true"></span>
+        <button type="button" class="icon-button" data-action="clear" aria-label="清除閱讀紀錄"><svg class="icon" aria-hidden="true"><use href="#i-trash" /></svg></button>
+      </div>
+    </fieldset>
+
+    <div id="control-tooltip" class="tooltip" role="tooltip" hidden><span id="tooltip-label"></span><kbd id="tooltip-shortcut" hidden></kbd></div>
+    <p id="toast" class="toast" role="status" hidden></p>
+    <dialog id="clear-dialog" aria-labelledby="clear-title" aria-describedby="clear-description">
+      <h2 id="clear-title">清除預覽紀錄？</h2>
+      <p id="clear-description" class="dialog-description">正式版本會清除本站閱讀紀錄並保留縮放偏好。此處只模擬操作，不會讀寫實際資料。</p>
+      <form method="dialog" class="dialog-actions"><button type="submit" value="cancel">取消</button><button type="submit" class="confirm" value="clear">清除</button></form>
+    </dialog>
+
+    <script>
+      // Standalone UI simulation. No userscript injection, storage, or network access.
+      const dock = document.getElementById("reader-dock")
+      const viewport = document.getElementById("reader-viewport")
+      const paper = document.getElementById("paper")
+      const tooltip = document.getElementById("control-tooltip")
+      const toast = document.getElementById("toast")
+      const clearDialog = document.getElementById("clear-dialog")
+      const nativeWidth = 560
+      const nativeHeight = nativeWidth * 870 / 600
+      let scale = 1
+      let mode = "native"
+      let page = 12
+      let pending = false
+      let tooltipControl = null
+      let toastTimer = 0
+
+      function hideTooltip() {
+        tooltip.hidden = true
+        tooltipControl?.removeAttribute("aria-describedby")
+        tooltipControl = null
+      }
+
+      function showTooltip(control) {
+        hideTooltip()
+        if (control.disabled) return
+        tooltipControl = control
+        document.getElementById("tooltip-label").textContent = control.getAttribute("aria-label")
+        const shortcut = document.getElementById("tooltip-shortcut")
+        shortcut.textContent = control.dataset.shortcut || ""
+        shortcut.hidden = !control.dataset.shortcut
+        tooltip.hidden = false
+        control.setAttribute("aria-describedby", "control-tooltip")
+        const rect = control.getBoundingClientRect()
+        const bounds = tooltip.getBoundingClientRect()
+        tooltip.style.left = `${Math.max(8, dock.getBoundingClientRect().left - bounds.width - 12)}px`
+        tooltip.style.top = `${Math.max(8, Math.min(innerHeight - bounds.height - 8, rect.top + (rect.height - bounds.height) / 2))}px`
+      }
+
+      function notify(message) {
+        clearTimeout(toastTimer)
+        toast.textContent = message
+        toast.hidden = false
+        toastTimer = setTimeout(() => { toast.hidden = true }, 2800)
+      }
+
+      function render() {
+        scale = Math.max(0.1, Math.min(8, scale))
+        paper.style.width = `${nativeWidth * scale}px`
+        document.getElementById("scale").textContent = `${Math.round(scale * 100)}%`
+        document.getElementById("page-number").textContent = String(page)
+        document.getElementById("caption-page").textContent = String(page)
+        const position = document.getElementById("page-position")
+        position.setAttribute("aria-label", `目前第 ${page} 頁`)
+        position.title = `目前第 ${page} 頁`
+        document.getElementById("resume-controls").hidden = !pending
+        for (const control of dock.querySelectorAll("[aria-pressed]")) {
+          control.setAttribute("aria-pressed", String(control.dataset.action === mode))
+        }
+        dock.querySelector('[data-action="in"]').disabled = scale >= 8
+        dock.querySelector('[data-action="out"]').disabled = scale <= 0.1
+        for (const control of document.querySelectorAll("[data-scenario]")) {
+          control.setAttribute("aria-pressed", String((control.dataset.scenario === "pending") === pending))
+        }
+        document.getElementById("scenario-description").textContent = pending
+          ? "待續紀錄：顯示「繼續閱讀」與「從此處閱讀」圖示。"
+          : "一般閱讀：隱藏兩個待續操作。"
+        if (tooltipControl && !tooltipControl.checkVisibility()) hideTooltip()
+      }
+
+      function setView(action) {
+        if (action === "in" || action === "out") {
+          mode = "manual"
+          scale *= action === "in" ? 1.1 : 1 / 1.1
+        } else if (action === "width") {
+          mode = "width"
+          scale = (viewport.clientWidth - 48) / nativeWidth
+        } else if (action === "height") {
+          mode = "height"
+          scale = (viewport.clientHeight - 116) / nativeHeight
+        } else if (action === "reset") {
+          mode = "native"
+          scale = 1
+        }
+        render()
+      }
+
+      for (const control of dock.querySelectorAll("button")) {
+        control.addEventListener("pointerenter", () => showTooltip(control))
+        control.addEventListener("pointerleave", () => {
+          if (!control.matches(":focus-visible")) hideTooltip()
+        })
+        control.addEventListener("focus", () => showTooltip(control))
+        control.addEventListener("blur", hideTooltip)
+        control.addEventListener("click", () => {
+          const action = control.dataset.action
+          if (action === "clear") {
+            hideTooltip()
+            clearDialog.showModal()
+          } else if (action === "resume" || action === "start") {
+            pending = false
+            if (action === "resume") page = 18
+            hideTooltip()
+            render()
+            notify(action === "resume" ? "預覽：已繼續閱讀第 18 頁。" : `預覽：改從目前第 ${page} 頁閱讀。`)
+          } else {
+            setView(action)
+          }
+        })
+      }
+
+      for (const control of document.querySelectorAll("[data-scenario]")) {
+        control.addEventListener("click", () => {
+          hideTooltip()
+          pending = control.dataset.scenario === "pending"
+          page = 12
+          render()
+        })
+      }
+
+      clearDialog.addEventListener("close", () => {
+        if (clearDialog.returnValue !== "clear") return
+        pending = false
+        hideTooltip()
+        render()
+        notify("預覽紀錄已清除；實際閱讀資料未變動。")
+      })
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") hideTooltip()
+        if (event.ctrlKey || event.metaKey || event.altKey || clearDialog.open) return
+        let action = null
+        if (event.key === "+" || event.key === "=") action = "in"
+        if (event.key === "-") action = "out"
+        if (event.key === "0") action = "reset"
+        if (event.shiftKey && event.key.toLowerCase() === "w") action = "width"
+        if (event.shiftKey && event.key.toLowerCase() === "h") action = "height"
+        if (!action) return
+        event.preventDefault()
+        setView(action)
+      })
+
+      window.addEventListener("resize", () => {
+        hideTooltip()
+        if (mode === "width" || mode === "height") setView(mode)
+      })
+      dock.querySelector(".dock-scroll").addEventListener("scroll", hideTooltip)
+      render()
+    </script>
+  </body>
+</html>

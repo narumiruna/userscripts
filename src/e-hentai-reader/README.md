@@ -10,7 +10,7 @@ Zoom reader images, save view settings, and resume from a locally saved reading 
 2. Reload an E-Hentai or ExHentai page.
 3. On a reader page, move the pointer over an image and hold **Ctrl** while turning the wheel.
 
-The script matches HTTPS pages on `e-hentai.org` and `exhentai.org`. Zoom controls operate only on `/s/*` single-image readers and `/mpv/*` Multi-Page Viewers (MPV). Other pages can show progress beside same-site gallery links or the gallery heading. Embedded frames are not supported.
+The script matches HTTPS pages on `e-hentai.org` and `exhentai.org`. Zoom controls operate only on `/s/*` single-image readers and `/mpv/*` Multi-Page Viewers (MPV). Other pages can show progress beside same-site gallery title links or the gallery heading. Embedded frames are not supported.
 
 Site access and MPV must already be available to the account. The script does not unlock them. Use the local source until the update is published on `main`; installation and update URLs do not publish local changes.
 
@@ -64,6 +64,8 @@ Scaling is relative to the site's current dimensions, not necessarily the origin
 - MPV keeps its vertical scrollbar hidden. Ordinary wheel input and keyboard navigation still scroll vertically. Oversized images have a horizontal scrollbar. Single-image readers keep their native document scrollbars.
 - The script does not add a continuous reader, request higher-resolution files, increase image quality, or bypass access limits. Other reader scripts can conflict with its layout rules.
 - Gallery indicators show only saved records on the current origin. They do not fetch gallery metadata or calculate a completion percentage.
+  - Resume links appear beside native `.glink` gallery title links and the `#gn` gallery heading. Each title gets at most one link, and its label stays on one line.
+  - Pagination, thumbnail links, and other navigation links remain unchanged.
 - Invalid storage records are ignored. If storage is blocked or full, zoom still works and the toolbar reports that changes cannot be saved. History has no automatic expiry; clear it when it is no longer needed.
 - The script requires a current browser with MutationObserver, requestAnimationFrame, localStorage, sessionStorage, and abortable event listeners. Site markup and native navigation can change.
 
@@ -82,7 +84,7 @@ Each native reader still loads images under its normal rules. Smaller images can
 
 ## Validation
 
-Version 0.2.0 passed JavaScript type checks and all 698 repository Vitest/jsdom tests. The reader tests load the exact installation source. They cover both sites and reader types, persistent view settings, explicit resume, delayed MPV loading and resizing, single-image navigation, storage validation and failure, cross-tab changes, history clearing, gallery indicators, and the existing zoom behavior.
+Version 0.2.1 passed JavaScript type checks and all 706 repository Vitest/jsdom tests, including eight new gallery-placement regression cases. The reader tests load the exact installation source. They cover both sites and reader types, persistent view settings, explicit resume, delayed MPV loading and resizing, single-image navigation, storage validation and failure, cross-tab changes, history clearing, gallery indicators, and the existing zoom behavior.
 
 ```sh
 npm test -- tests/e-hentai-reader.test.js tests/e-hentai-reader-state.test.js
@@ -93,4 +95,6 @@ npm run ci
 
 Headless Chromium 158.0.8127.18 checks used neutral SVG images and the site's `ehg_mpv.c.js` native reader code in intercepted fixtures. They verified MPV page/offset resume after reopening, saved fit-width mode, native wheel and keyboard navigation after resume, gallery resume links, history clearing, physical Ctrl + wheel input, saved manual scale, native single-image navigation, and cross-document resume. MPV and single-image relative offsets matched the saved values within 0.003. No page errors occurred.
 
-The new persistence features were not installed in a userscript manager or checked on a live gallery during this update. Browser fixtures verify browser layout and native MPV integration, not live-site markup or manager injection. Earlier zoom-only versions had separate live-page manager checks.
+Additional pagination fixtures reproduced the version 0.2.0 layout defect on both site origins at viewport widths of 320 and 1280 px. The old source inserted eight resume links into two pagination tables and increased each table's height from 30 to approximately 121 px. Version 0.2.1 left both tables' DOM and height unchanged, kept one single-line resume link beside the gallery heading, and produced no page errors.
+
+Version 0.2.1 was not installed in a userscript manager or checked on a live gallery during this update. Browser fixtures verify browser layout and native MPV integration, not live-site markup or manager injection. Earlier zoom-only versions had separate live-page manager checks.

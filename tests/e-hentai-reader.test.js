@@ -71,6 +71,20 @@ function button(action) {
   return doc.querySelector(`#eh-reader-toolbar button[data-action='${action}']`)
 }
 
+function pointer(type, target, relatedTarget = null) {
+  target.dispatchEvent(new page.MouseEvent(type, { bubbles: true, relatedTarget }))
+}
+
+function tooltipFor(target) {
+  const tooltip = doc.getElementById("eh-reader-tooltip")
+  expect(tooltip.hidden).toBe(false)
+  expect(tooltip.querySelector("span").textContent).toBe(target.getAttribute("aria-label"))
+  expect(tooltip.querySelector("kbd").textContent).toBe(target.dataset.shortcut ?? "")
+  expect(tooltip.querySelector("kbd").hidden).toBe(!target.dataset.shortcut)
+  expect(target.getAttribute("aria-describedby")).toBe(tooltip.id)
+  return tooltip
+}
+
 function percent() {
   return doc.querySelector("#eh-reader-toolbar output").textContent
 }
@@ -147,7 +161,7 @@ test("the exact installation source has standalone metadata and source update UR
     )
   expect(values("name")).toEqual(["E-Hentai Reader"])
   expect(values("namespace")).toEqual(["userscripts/e-hentai-reader"])
-  expect(values("version")).toEqual(["0.2.1"])
+  expect(values("version")).toEqual(["0.3.0"])
   expect(values("grant")).toEqual(["none"])
   expect(values("run-at")).toEqual(["document-idle"])
   expect(values("license")).toEqual(["AGPL-3.0-only"])
@@ -177,7 +191,7 @@ test.each([
   expect(doc.querySelectorAll("#eh-reader-toolbar button")).toHaveLength(7)
   expect(percent()).toBe("100%")
   expect(doc.documentElement.classList.contains("eh-reader-active")).toBe(false)
-  expect(rules().some((rule) => rule.style.getPropertyValue("--ehr-width"))).toBe(false)
+  expect(rules().some((rule) => rule.style?.getPropertyValue("--ehr-width"))).toBe(false)
 
   const event = wheel({ deltaY: -Math.log(1.1) / 0.0015 }, image)
   expect(event.defaultPrevented).toBe(true)
@@ -195,6 +209,262 @@ test.each([
   expect(dimensions(id)).toBeNull()
   expect(doc.documentElement.classList.contains("eh-reader-active")).toBe(false)
   expect(image.getAttribute("style")).toBe(nativeStyle)
+})
+
+test.each([false, true])("installs an accessible vertical icon dock (MPV=%s)", (mpv) => {
+  setup(mpv ? "/mpv/123/token/" : "/s/token/123-1", mpv ? multi : single)
+  page.localStorage.setItem(
+    "eh-reader:progress:123",
+    JSON.stringify({ page: 9, offset: 0.4, path: "/s/saved/123-9" }),
+  )
+  start()
+  const toolbar = doc.getElementById("eh-reader-toolbar")
+  const controls = toolbar.querySelector(".eh-reader-controls")
+  const tooltip = doc.getElementById("eh-reader-tooltip")
+  expect(toolbar.getAttribute("role")).toBe("group")
+  expect(toolbar.getAttribute("aria-label")).toContain("E-Hentai Reader")
+  expect(controls).not.toBeNull()
+  expect(tooltip.parentElement).toBe(toolbar)
+  expect(controls.contains(tooltip)).toBe(false)
+  expect(tooltip.getAttribute("role")).toBe("tooltip")
+  expect(tooltip.hidden).toBe(true)
+  expect(tooltip.querySelector("span")).not.toBeNull()
+  expect(tooltip.querySelector("kbd")).not.toBeNull()
+  expect(
+    [...controls.querySelectorAll("[data-action]")].map((node) => node.dataset.action),
+  ).toEqual(["in", "out", "width", "height", "reset", "resume", "start", "clear"])
+  for (const action of controls.querySelectorAll("[data-action]")) {
+    expect(action.textContent.trim()).toBe("")
+    expect(action.getAttribute("aria-label")).toMatch(/[\u3400-\u9fff]/)
+    expect(action.querySelectorAll("svg")).toHaveLength(1)
+    expect(action.querySelector("svg").getAttribute("aria-hidden")).toBe("true")
+    expect(action.querySelector("svg").getAttribute("focusable")).toBe("false")
+    if (action.tagName === "BUTTON") expect(action.type).toBe("button")
+    const style = page.getComputedStyle(action)
+    expect(style.width).toBe("44px")
+    expect(style.height).toBe("44px")
+  }
+  for (const [action, description] of [
+    ["width", "寬度"],
+    ["height", "高度"],
+  ]) {
+    expect(button(action).getAttribute("aria-label")).toContain(description)
+    expect(button(action).getAttribute("aria-label")).not.toContain("Shift")
+    expect(button(action).dataset.shortcut).toBe(`Shift + ${action === "width" ? "W" : "H"}`)
+    expect(button(action).getAttribute("aria-pressed")).toBe("false")
+  }
+  for (const action of ["out", "in", "reset"]) {
+    expect(button(action).dataset.shortcut).toBeTruthy()
+    expect(button(action).getAttribute("aria-label")).not.toContain(button(action).dataset.shortcut)
+  }
+  const dockStyle = page.getComputedStyle(toolbar)
+  expect(dockStyle.position).toBe("fixed")
+  expect(dockStyle.width).toBe("64px")
+  expect(page.getComputedStyle(controls).overflowY).toBe("auto")
+  expect(controls.firstElementChild.id).toBe("eh-reader-position")
+  const groups = [...controls.querySelectorAll(".eh-reader-group")]
+  expect(groups).toHaveLength(3)
+  expect([...groups[0].children].map((node) => node.dataset.action ?? node.tagName)).toEqual([
+    "in",
+    "OUTPUT",
+    "out",
+  ])
+  expect([...groups[1].children].map((node) => node.dataset.action)).toEqual([
+    "width",
+    "height",
+    "reset",
+  ])
+  expect([...groups[2].children].map((node) => node.dataset.action)).toEqual(["resume", "start"])
+  for (const group of groups) {
+    expect(page.getComputedStyle(group).display).toBe("flex")
+    expect(page.getComputedStyle(group).flexDirection).toBe("column")
+  }
+  for (const divider of controls.querySelectorAll(".eh-reader-divider")) {
+    expect(divider.getAttribute("aria-hidden")).toBe("true")
+  }
+  expect(
+    doc.querySelectorAll("#eh-reader-toolbar img, #eh-reader-toolbar use[href], link, iframe"),
+  ).toHaveLength(0)
+  expect(button("clear").closest(".eh-reader-controls")).toBe(controls)
+})
+
+test("pointer tooltips resolve nested icons, replace content, and close when the pointer leaves", () => {
+  setup()
+  start()
+  const toolbar = doc.getElementById("eh-reader-toolbar")
+  toolbar.getBoundingClientRect = () => rect(920, 300, 64, 450)
+  const target = button("width")
+  target.getBoundingClientRect = () => rect(930, 460, 44, 44)
+  const tooltip = doc.getElementById("eh-reader-tooltip")
+  tooltip.getBoundingClientRect = () => rect(0, 0, 180, 40)
+  const icon = target.querySelector("svg")
+  expect(icon).not.toBeNull()
+  pointer("pointerover", icon.firstElementChild ?? icon)
+  tooltipFor(target)
+  pointer("pointerout", icon.firstElementChild ?? icon, target)
+  expect(tooltip.hidden).toBe(false)
+  const style = page.getComputedStyle(tooltip)
+  expect(["fixed", "absolute"]).toContain(style.position)
+  // jsdom has no layout: use the fixed popup's declared coordinates and a stubbed width.
+  if (style.position === "fixed") {
+    expect(Number.parseFloat(style.left) + 180).toBeLessThanOrEqual(920)
+  } else {
+    expect(Number.parseFloat(style.right)).toBeGreaterThanOrEqual(64)
+  }
+  expect(page.getComputedStyle(toolbar).width).toBe("64px")
+  pointer("pointerout", icon, doc.body)
+  expect(tooltip.hidden).toBe(true)
+  expect(target.hasAttribute("aria-describedby")).toBe(false)
+  pointer("pointerover", button("reset"))
+  tooltipFor(button("reset"))
+  pointer("pointerout", button("reset"), doc.body)
+  expect(tooltip.hidden).toBe(true)
+  pointer("pointerover", toolbar.querySelector("output"))
+  expect(tooltip.hidden).toBe(true)
+})
+
+test("keyboard focus shows labels and shortcuts; blur, Escape, and pointer scroll hide the tooltip", () => {
+  setup()
+  start()
+  const target = button("height")
+  target.focus()
+  const tooltip = tooltipFor(target)
+  expect(tooltip.querySelector("kbd").textContent).toBe("Shift + H")
+  target.blur()
+  expect(tooltip.hidden).toBe(true)
+  target.focus()
+  tooltipFor(target)
+  const escapeEvent = key("Escape", {}, target)
+  expect(tooltip.hidden).toBe(true)
+  expect(target.hasAttribute("aria-describedby")).toBe(false)
+  expect(escapeEvent.defaultPrevented).toBe(false)
+  expect(doc.activeElement).toBe(target)
+  pointer("pointerover", button("width"))
+  tooltipFor(button("width"))
+  doc.querySelector(".eh-reader-controls").dispatchEvent(new page.Event("scroll"))
+  expect(tooltip.hidden).toBe(true)
+  expect(doc.querySelector("output").textContent).toBe("100%")
+})
+
+test("scrolling a keyboard-focused icon into view keeps its tooltip until the icon leaves view", () => {
+  setup()
+  start()
+  const controls = doc.querySelector(".eh-reader-controls")
+  controls.getBoundingClientRect = () => rect(920, 300, 44, 300)
+  const target = button("width")
+  target.getBoundingClientRect = () => rect(920, 400, 44, 44)
+  target.focus()
+  const tooltip = tooltipFor(target)
+  controls.dispatchEvent(new page.Event("scroll"))
+  expect(tooltip.hidden).toBe(false)
+  expect(target.getAttribute("aria-describedby")).toBe(tooltip.id)
+  target.getBoundingClientRect = () => rect(920, 200, 44, 44)
+  controls.dispatchEvent(new page.Event("scroll"))
+  expect(tooltip.hidden).toBe(true)
+  expect(target.hasAttribute("aria-describedby")).toBe(false)
+})
+
+test.each(["in", "out"])(
+  "a disabled %s icon dismisses its tooltip and cannot reopen it",
+  async (action) => {
+    setup()
+    start()
+    const target = button(action)
+    target.focus()
+    const tooltip = tooltipFor(target)
+    for (let index = 0; index < 60; index++) target.click()
+    await settle()
+    expect(target.disabled).toBe(true)
+    expect(tooltip.hidden).toBe(true)
+    pointer("pointerover", target.querySelector("svg"))
+    target.dispatchEvent(new page.FocusEvent("focusin", { bubbles: true }))
+    expect(tooltip.hidden).toBe(true)
+  },
+)
+
+test("hidden controls and a hidden toolbar dismiss tooltips and reject synthetic hover and focus", async () => {
+  setup()
+  start()
+  await settle()
+  const target = button("width")
+  pointer("pointerover", target)
+  const tooltip = tooltipFor(target)
+  target.hidden = true
+  await settle()
+  expect(tooltip.hidden).toBe(true)
+  pointer("pointerover", target.querySelector("svg"))
+  target.dispatchEvent(new page.FocusEvent("focusin", { bubbles: true }))
+  expect(tooltip.hidden).toBe(true)
+  target.hidden = false
+  pointer("pointerover", target)
+  tooltipFor(target)
+  doc.getElementById("img").remove()
+  await settle()
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(true)
+  expect(tooltip.hidden).toBe(true)
+  pointer("pointerover", target)
+  target.dispatchEvent(new page.FocusEvent("focusin", { bubbles: true }))
+  expect(tooltip.hidden).toBe(true)
+})
+
+test("nested fit and zoom SVG clicks retain action delegation and pressed state", () => {
+  setup()
+  start()
+  for (const action of ["width", "height", "in", "out", "reset"]) {
+    const icon = button(action).querySelector("svg")
+    expect(icon).not.toBeNull()
+    const nested = icon.firstElementChild ?? icon
+    nested.dispatchEvent(new page.MouseEvent("click", { bubbles: true, cancelable: true }))
+    expect(button("width").getAttribute("aria-pressed")).toBe(String(action === "width"))
+    expect(button("height").getAttribute("aria-pressed")).toBe(String(action === "height"))
+    if (action === "width") expectDimensions(998, 1996)
+    if (action === "height") expectDimensions(372, 744)
+    if (action === "in") expectDimensions(409.2, 818.4)
+    if (action === "out") expectDimensions(372, 744)
+    if (action === "reset") expect(dimensions()).toBeNull()
+  }
+})
+
+test("toolbar and tooltip updates settle without observer loops and detach on cleanup", async () => {
+  setup()
+  start()
+  const toolbar = doc.getElementById("eh-reader-toolbar")
+  const controls = toolbar.querySelector(".eh-reader-controls")
+  const target = button("in")
+  pointer("pointerover", target)
+  const tooltip = tooltipFor(target)
+  target.querySelector("svg").dispatchEvent(new page.MouseEvent("click", { bubbles: true }))
+  doc.getElementById("img").style.width = "1200px"
+  await settle()
+  await settle()
+  const request = vi.spyOn(page, "requestAnimationFrame")
+  const mutations = vi.fn()
+  const observer = new page.MutationObserver(mutations)
+  observer.observe(toolbar, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    characterData: true,
+  })
+  await new Promise((resolve) => page.setTimeout(resolve, 70))
+  expect(request).not.toHaveBeenCalled()
+  expect(mutations).not.toHaveBeenCalled()
+  observer.disconnect()
+  stop()
+  expect(doc.getElementById("eh-reader-tooltip")).toBeNull()
+  const before = toolbar.outerHTML
+  request.mockClear()
+  for (const type of ["pointerover", "pointerout"]) pointer(type, target)
+  for (const type of ["focusin", "focusout"]) {
+    target.dispatchEvent(new page.FocusEvent(type, { bubbles: true }))
+  }
+  key("Escape", {}, target)
+  controls.dispatchEvent(new page.Event("scroll"))
+  target.click()
+  await new Promise((resolve) => page.setTimeout(resolve, 40))
+  expect(toolbar.outerHTML).toBe(before)
+  expect(request).not.toHaveBeenCalled()
+  expect(tooltip.isConnected).toBe(false)
 })
 
 test.each(

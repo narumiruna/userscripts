@@ -111,6 +111,29 @@ function control(action) {
   return doc.querySelector(`#eh-reader-toolbar [data-action='${action}']`)
 }
 
+function expectPosition(number) {
+  const position = doc.getElementById("eh-reader-position")
+  expect(position.textContent.trim()).toBe(String(number))
+  expect(position.getAttribute("aria-label")).toBe(`第 ${number} 頁`)
+  expect(position.title).toBe(`第 ${number} 頁`)
+  expect(position.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true")
+  expect(position.querySelector("svg")?.getAttribute("focusable")).toBe("false")
+}
+
+function expectPendingResume(number, href) {
+  const resume = control("resume")
+  const group = resume.closest(".eh-reader-resume-group")
+  expect(group).not.toBeNull()
+  expect(group.hidden).toBe(number === null)
+  expect(resume.hidden).toBe(number === null)
+  expect(control("start").hidden).toBe(number === null)
+  expect(resume.textContent.trim()).toBe("")
+  if (number !== null) {
+    expect(resume.getAttribute("aria-label")).toBe(`繼續閱讀：第 ${number} 頁`)
+    expect(resume.getAttribute("href")).toBe(href)
+  }
+}
+
 function saved(key = progressKey) {
   return JSON.parse(page.localStorage.getItem(key))
 }
@@ -194,7 +217,7 @@ test("saves the single-image page and relative vertical position without query s
   doc.dispatchEvent(new page.Event("scroll"))
   flush()
   expect(saved()).toEqual({ page: 4, offset: 0.252, path: "/s/token/123-4" })
-  expect(doc.getElementById("eh-reader-position").textContent).toBe("第 4 頁")
+  expectPosition(4)
 })
 
 test("debounces reading progress and flushes the latest position", async () => {
@@ -222,7 +245,7 @@ test("MPV uses the visible image_N and placeholder content geometry, not the URL
   pane.dispatchEvent(new page.Event("scroll"))
   flush()
   expect(saved()).toEqual({ page: 2, offset: 280 / 1200, path: "/mpv/123/gallery/" })
-  expect(doc.getElementById("eh-reader-position").textContent).toBe("第 2 頁")
+  expectPosition(2)
 })
 
 test.each([false, true])(
@@ -235,8 +258,10 @@ test.each([false, true])(
     })
     start()
     expect(saved()).toEqual(progress)
-    expect(control("resume").hidden).toBe(false)
-    expect(control("resume").textContent).toContain("第 9 頁")
+    expectPendingResume(
+      9,
+      mpv ? "/mpv/123/gallery/#eh-reader-resume" : "/s/old/123-9#eh-reader-resume",
+    )
     expect(doc.documentElement.scrollTop).toBe(0)
     if (mpv) expect(doc.getElementById("pane_images").scrollTop).toBe(0)
     page.dispatchEvent(new page.Event("resize"))
@@ -460,6 +485,146 @@ test("storage deletion in another tab cancels local progress writes without jump
   expect(doc.documentElement.scrollTop).toBe(0)
 })
 
+test.each([false, true])(
+  "updates icon-only pending resume controls after cross-tab changes (MPV=%s)",
+  async (mpv) => {
+    setup({ path: mpv ? "/mpv/123/gallery/" : "/s/token/123-1" })
+    start()
+    expectPendingResume(null)
+    const write = vi.spyOn(page.Storage.prototype, "setItem")
+    for (const number of [8, 12]) {
+      const progress = { page: number, offset: 0.3, path: `/s/saved/123-${number}` }
+      page.localStorage.setItem(progressKey, JSON.stringify(progress))
+      write.mockClear()
+      page.dispatchEvent(
+        new page.StorageEvent("storage", { key: progressKey, newValue: JSON.stringify(progress) }),
+      )
+      await settle()
+      expectPendingResume(number, `${mpv ? "/mpv/123/gallery/" : progress.path}#eh-reader-resume`)
+      expect(control("resume").querySelector("svg")).not.toBeNull()
+      expect(control("start").closest(".eh-reader-resume-group")).toBe(
+        control("resume").closest(".eh-reader-resume-group"),
+      )
+      control("resume").focus()
+      const tooltip = doc.getElementById("eh-reader-tooltip")
+      expect(tooltip.hidden).toBe(false)
+      expect(tooltip.querySelector("span").textContent).toBe(`繼續閱讀：第 ${number} 頁`)
+      expect(tooltip.querySelector("kbd").hidden).toBe(true)
+      flush()
+      expect(write).not.toHaveBeenCalled()
+      expect(saved()).toEqual(progress)
+      expect(doc.documentElement.scrollTop).toBe(0)
+      if (mpv) expect(doc.getElementById("pane_images").scrollTop).toBe(0)
+    }
+    page.localStorage.removeItem(progressKey)
+    page.dispatchEvent(new page.StorageEvent("storage", { key: progressKey, newValue: null }))
+    await settle()
+    expectPendingResume(null)
+    expect(doc.getElementById("eh-reader-tooltip").hidden).toBe(true)
+    flush()
+    expect(write).not.toHaveBeenCalled()
+  },
+)
+
+test.each(["resume", "start", "clear"])(
+  "nested SVG clicks delegate the %s action and update the pending group",
+  async (action) => {
+    setup({ local: { [progressKey]: { page: 1, offset: 0.4, path: "/s/token/123-1" } } })
+    const confirm = vi.spyOn(page, "confirm").mockImplementation(() => {
+      expect(doc.getElementById("eh-reader-tooltip").hidden).toBe(true)
+      return true
+    })
+    start()
+    const target = control(action)
+    target.focus()
+    expect(doc.getElementById("eh-reader-tooltip").hidden).toBe(false)
+    const icon = target.querySelector("svg")
+    expect(icon).not.toBeNull()
+    const nested = icon.firstElementChild ?? icon
+    nested.dispatchEvent(new page.MouseEvent("click", { bubbles: true, cancelable: true }))
+    await settle()
+    expectPendingResume(null)
+    if (action === "resume") expect(doc.documentElement.scrollTop).toBe(896)
+    else expect(doc.documentElement.scrollTop).toBe(0)
+    if (action === "clear") {
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(saved()).toBeNull()
+      const status = doc.querySelector('[role="status"]')
+      expect(status.textContent).toContain("已清除本站閱讀紀錄")
+      expect(status.hidden).toBe(false)
+      expect(page.getComputedStyle(status).position).toBe("fixed")
+    } else {
+      expect(confirm).not.toHaveBeenCalled()
+      expect(doc.getElementById("eh-reader-tooltip").hidden).toBe(true)
+      expect(saved().page).toBe(1)
+    }
+  },
+)
+
+test("clear notices expire and cleanup cancels the pending popup timer", () => {
+  setup()
+  vi.spyOn(page, "confirm").mockReturnValue(true)
+  start()
+  vi.useFakeTimers()
+  try {
+    const timer = vi.spyOn(page, "setTimeout")
+    const cancel = vi.spyOn(page, "clearTimeout")
+    const status = doc.querySelector('[role="status"]')
+    control("clear").click()
+    expect(status.textContent).toContain("已清除本站閱讀紀錄")
+    vi.advanceTimersByTime(2799)
+    expect(status.textContent).toContain("已清除本站閱讀紀錄")
+    vi.advanceTimersByTime(1)
+    expect(status.textContent).toBe("")
+    control("clear").click()
+    const index = timer.mock.calls.findLastIndex(([, delay]) => delay === 2800)
+    expect(index).toBeGreaterThanOrEqual(0)
+    const pendingTimer = timer.mock.results[index].value
+    stop()
+    expect(cancel).toHaveBeenCalledWith(pendingTimer)
+    const text = status.textContent
+    vi.advanceTimersByTime(3000)
+    expect(status.textContent).toBe(text)
+    expect(status.isConnected).toBe(false)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test("storage failure notices remain readable after the transient notice timeout", () => {
+  setup()
+  vi.spyOn(page.Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota")
+  })
+  start()
+  vi.useFakeTimers()
+  try {
+    control("in").click()
+    flush()
+    const status = doc.querySelector('[role="status"]')
+    expect(status.textContent).toContain("變更不會保存")
+    vi.advanceTimersByTime(3000)
+    expect(status.textContent).toContain("變更不會保存")
+    expect(page.getComputedStyle(status).display).not.toBe("none")
+    stop()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test("canceling a nested clear icon click preserves the pending group", () => {
+  const progress = { page: 8, offset: 0.3, path: "/s/saved/123-8" }
+  setup({ local: { [progressKey]: progress } })
+  const confirm = vi.spyOn(page, "confirm").mockReturnValue(false)
+  start()
+  control("clear")
+    .querySelector("svg")
+    .dispatchEvent(new page.MouseEvent("click", { bubbles: true, cancelable: true }))
+  expect(confirm).toHaveBeenCalledTimes(1)
+  expect(saved()).toEqual(progress)
+  expectPendingResume(8, "/s/saved/123-8#eh-reader-resume")
+})
+
 test("blocked local storage leaves zoom working and reports that changes cannot be saved", () => {
   setup()
   vi.spyOn(page, "localStorage", "get").mockImplementation(() => {
@@ -472,7 +637,10 @@ test("blocked local storage leaves zoom working and reports that changes cannot 
   control("in").click()
   flush()
   expect(doc.querySelector("output").textContent).toBe("110%")
-  expect(doc.querySelector('[role="status"]').textContent).toContain("無法使用本機儲存")
+  const status = doc.querySelector('[role="status"]')
+  expect(status.textContent).toContain("無法使用本機儲存")
+  expect(status.hidden).toBe(false)
+  expect(page.getComputedStyle(status).position).toBe("fixed")
 })
 
 test("storage quota failures do not break fit controls or cleanup", () => {
@@ -566,7 +734,7 @@ test("a newer record from another tab pauses stale lifecycle writes without jump
   )
   flush()
   expect(saved()).toEqual(progress)
-  expect(control("resume").textContent).toContain("第 9 頁")
+  expect(control("resume").getAttribute("aria-label")).toBe("繼續閱讀：第 9 頁")
   expect(doc.documentElement.scrollTop).toBe(0)
   control("start").click()
   expect(saved().page).toBe(1)
@@ -586,7 +754,7 @@ test.each([{ key: " ", shiftKey: true }, { key: "W" }, { key: "2", code: "Numpad
 )
 
 test.each(["ctrlKey", "metaKey", "shiftKey", "altKey"])(
-  "resume preserves native %s-click navigation",
+  "the resume icon preserves native %s-click navigation",
   (modifier) => {
     const progress = { page: 1, offset: 0.4, path: "/s/token/123-1" }
     setup({ local: { [progressKey]: progress } })
@@ -607,7 +775,10 @@ test.each(["ctrlKey", "metaKey", "shiftKey", "altKey"])(
       },
       { once: true },
     )
-    resume.dispatchEvent(event)
+    const icon = resume.querySelector("svg")
+    expect(icon).not.toBeNull()
+    const nested = icon.firstElementChild ?? icon
+    nested.dispatchEvent(event)
     expect(prevented).toBe(false)
     expect(doc.documentElement.scrollTop).toBe(0)
     flush()
@@ -715,7 +886,7 @@ test("same-document single-reader navigation updates page identity before the ne
   flush()
   expect(saved().page).toBe(2)
   expect(saved().path).toBe("/s/next/123-2")
-  expect(doc.getElementById("eh-reader-position").textContent).toBe("第 2 頁")
+  expectPosition(2)
   expect(page.sessionStorage.getItem(continuationKey)).toBeNull()
 })
 
@@ -738,7 +909,7 @@ test("same-document navigation to a different gallery preserves that gallery's p
   page.history.pushState(null, "", "/s/next/456-2")
   flush()
   expect(saved("eh-reader:progress:456")).toEqual(progress)
-  expect(control("resume").textContent).toContain("第 8 頁")
+  expect(control("resume").getAttribute("aria-label")).toBe("繼續閱讀：第 8 頁")
 })
 
 test("starting here cancels a deferred resume marker before the target appears", async () => {

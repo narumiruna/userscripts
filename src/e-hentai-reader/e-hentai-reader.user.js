@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         E-Hentai Reader
 // @namespace    userscripts/e-hentai-reader
-// @version      0.4.1
+// @version      0.4.2
 // @description  Zoom reader images, remember view settings, and resume reading from locally saved progress.
 // @match        https://e-hentai.org/*
 // @match        https://exhentai.org/*
@@ -92,22 +92,55 @@
   /** @param {Progress} progress @param {string} [path] */
   function resumeHref(progress, path = progress.path) {
     return (
-      path + (readerLocation(path)?.mpv ? `?${resumeParameter}=1#page${progress.page}` : resumeHash)
+      path +
+      (readerLocation(path)?.mpv
+        ? `?${resumeParameter}=${progress.page}:${progress.offset}#page${progress.page}`
+        : resumeHash)
     )
   }
 
-  function wantsResume() {
-    return (
-      location.hash === resumeHash ||
-      (readerLocation(location.pathname)?.mpv &&
-        new URLSearchParams(location.search).get(resumeParameter) === "1")
+  /** @returns {{progress: Progress | null} | null} */
+  function readResumeRequest() {
+    const reader = readerLocation(location.pathname)
+    const legacy = location.hash === resumeHash
+    if (!reader?.mpv) return legacy ? { progress: null } : null
+    const value = new URLSearchParams(location.search).get(resumeParameter)
+    if (value === "1") {
+      const saved = readProgress(reader.id)
+      const page = Number(location.hash.match(/^#page([1-9]\d*)$/)?.[1])
+      // Old links contain no offset snapshot. Do not apply another page's offset.
+      return {
+        progress:
+          Number.isSafeInteger(page) && page > 0 && saved?.page !== page
+            ? { page, offset: 0, path: reader.path }
+            : saved,
+      }
+    }
+    const [pageValue, offsetValue, ...extra] = value?.split(":") ?? []
+    const page = Number(pageValue)
+    const offset = Number(offsetValue)
+    if (
+      pageValue &&
+      /^[1-9]\d*$/.test(pageValue) &&
+      Number.isSafeInteger(page) &&
+      offsetValue?.trim() &&
+      Number.isFinite(offset) &&
+      offset >= 0 &&
+      offset <= 1 &&
+      extra.length === 0
     )
+      return { progress: { page, offset, path: reader.path } }
+    return legacy ? { progress: null } : null
   }
 
   function clearResumeRequest() {
     const url = new URL(location.href)
     if (url.hash === resumeHash) url.hash = ""
-    if (readerLocation(url.pathname)?.mpv && url.searchParams.get(resumeParameter) === "1")
+    if (
+      readerLocation(url.pathname)?.mpv &&
+      url.searchParams.has(resumeParameter) &&
+      readResumeRequest()
+    )
       url.searchParams.delete(resumeParameter)
     if (url.href !== location.href)
       history.replaceState(history.state, "", url.pathname + url.search + url.hash)
@@ -142,7 +175,7 @@
     try {
       const continuing = sessionStorage.getItem(continuationKey) === path
       sessionStorage.removeItem(continuationKey)
-      return continuing
+      return continuing && !readerLocation(path)?.mpv && !readResumeRequest()
     } catch {
       return false
     }
@@ -611,6 +644,7 @@
   const reader = readerLocation(location.pathname)
   if (!reader) return startGalleryProgress()
   let gallery = reader
+  const request = readResumeRequest()
   const continuing = takeContinuation(gallery.path)
   const mpv = gallery.mpv
   const minScale = 0.1
@@ -630,9 +664,9 @@
       ? preference.mode
       : "native"
   let manualScale = mode === "manual" ? preference.scale : 1
-  let pendingProgress = continuing ? null : readProgress(gallery.id)
+  let pendingProgress = request?.progress ?? (continuing ? null : readProgress(gallery.id))
   let recording = !pendingProgress
-  let resumeRequested = wantsResume()
+  let resumeRequested = Boolean(request)
   /** @type {Progress | null} */
   let restoredProgress = null
   let progressTimer = 0
@@ -899,7 +933,15 @@
   }
 
   function scheduleRefresh() {
-    if (stopped || frame) return
+    if (stopped) return
+    // Background tabs can suspend animation frames while native MPV images load.
+    if (resumeRequested && document.hidden) {
+      cancelAnimationFrame(frame)
+      frame = 0
+      refresh()
+      return
+    }
+    if (frame) return
     frame = requestAnimationFrame(() => {
       frame = 0
       refresh()
@@ -931,6 +973,7 @@
         resumeRequested = false
         restoredProgress = null
         clearTimeout(progressTimer)
+        clearResumeRequest()
         showStatus("已清除本站閱讀紀錄。", true)
       }
       updateControls()
@@ -1037,16 +1080,17 @@
     if (next.path !== gallery.path) {
       const changedGallery = next.id !== gallery.id
       gallery = next
+      const request = readResumeRequest()
       const continuing = takeContinuation(next.path)
-      if (changedGallery) {
-        pendingProgress = readProgress(next.id)
+      if (changedGallery || request) {
+        pendingProgress = request?.progress ?? readProgress(next.id)
         recording = !pendingProgress
       }
       if (continuing) {
         pendingProgress = null
         recording = true
       }
-      resumeRequested = wantsResume()
+      resumeRequested = Boolean(request)
       restoredProgress = null
       updateControls()
     }
@@ -1196,7 +1240,10 @@
       )
         return
       if (
+        !mpv &&
         url?.origin === location.origin &&
+        url.pathname !== gallery.path &&
+        !readerLocation(url.pathname)?.mpv &&
         readerLocation(url.pathname)?.id === gallery.id &&
         (!link?.getAttribute("target") || link.getAttribute("target") === "_self") &&
         event instanceof MouseEvent &&
@@ -1246,6 +1293,7 @@
         resumeRequested = false
         restoredProgress = null
         clearTimeout(progressTimer)
+        clearResumeRequest()
         updateControls()
       }
     },

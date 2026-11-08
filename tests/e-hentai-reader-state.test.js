@@ -134,6 +134,25 @@ function expectPendingResume(number, href) {
   }
 }
 
+function expectGalleryResume(number, href) {
+  const resume = control("resume")
+  expect(resume.tagName).toBe("A")
+  expect(resume.hidden).toBe(number === null)
+  expect(resume.closest(".eh-reader-resume-group").hidden).toBe(number === null)
+  if (number !== null) {
+    expect(resume.querySelector(".eh-reader-page-badge").textContent).toBe(String(number))
+    expect(resume.getAttribute("aria-label")).toBe(`繼續閱讀：第 ${number} 頁`)
+    expect(resume.getAttribute("href")).toBe(href)
+  }
+}
+
+function changeProgress(progress, key = progressKey) {
+  const newValue = progress === null ? null : JSON.stringify(progress)
+  if (newValue === null) page.localStorage.removeItem(key)
+  else page.localStorage.setItem(key, newValue)
+  page.dispatchEvent(new page.StorageEvent("storage", { key, newValue }))
+}
+
 function saved(key = progressKey) {
   return JSON.parse(page.localStorage.getItem(key))
 }
@@ -656,12 +675,12 @@ test("storage quota failures do not break fit controls or cleanup", () => {
   expect(() => stop()).not.toThrow()
 })
 
-test.each(["/", "/favorites.php", "/?f_search=example", "/g/123/gallery/?p=4"])(
+test.each(["/", "/favorites.php", "/?f_search=example"])(
   "shows a read-only resume indicator on %s",
   (path) => {
     setup({
       path,
-      html: path.startsWith("/g/") ? '<h1 id="gn">Example gallery</h1>' : listing,
+      html: listing,
       local: { [progressKey]: { page: 8, offset: 0.3, path: "/s/saved/123-8" } },
     })
     const write = vi.spyOn(page.Storage.prototype, "setItem")
@@ -798,18 +817,18 @@ test.each(["e-hentai.org", "exhentai.org"])(
     const tables = [...doc.querySelectorAll(".ptt")].map((table) => table.outerHTML)
     start()
     expect([...doc.querySelectorAll(".ptt")].map((table) => table.outerHTML)).toEqual(tables)
-    expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
-    expect(doc.getElementById("gn").nextElementSibling.className).toBe("eh-reader-progress")
+    expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+    expect(doc.getElementById("gn").nextElementSibling.matches(".ptt")).toBe(true)
+    expectGalleryResume(5, "/s/saved/123-5#eh-reader-resume")
     expect(
       doc.getElementById("navigation").nextElementSibling?.matches(".eh-reader-progress"),
     ).not.toBe(true)
-    expect(page.getComputedStyle(doc.querySelector(".eh-reader-progress")).whiteSpace).toBe(
-      "nowrap",
-    )
+    expect(doc.getElementById("navigation").getAttribute("href")).toBe("/g/123/gallery/?p=0")
+    expect(doc.getElementById("navigation").textContent).toBe("Return to gallery")
   },
 )
 
-test("does not decorate gallery pagination when no title is available", () => {
+test("shows the gallery dock without a title and leaves pagination unchanged", () => {
   setup({
     path: "/g/123/gallery/",
     html: pagination,
@@ -819,6 +838,8 @@ test("does not decorate gallery pagination when no title is available", () => {
   start()
   expect(doc.querySelector(".ptt").outerHTML).toBe(before)
   expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+  expectGalleryResume(5, "/s/saved/123-5#eh-reader-resume")
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(false)
 })
 
 test.each([
@@ -871,6 +892,313 @@ test("gallery indicators recover when the site removes their sibling badge", asy
   expect(doc.querySelector(".glink").parentElement.nextElementSibling.className).toBe(
     "eh-reader-progress",
   )
+})
+
+test.each(["e-hentai.org", "exhentai.org"])(
+  "uses only the current gallery's toolbar resume on %s, including without native title DOM",
+  async (hostname) => {
+    setup({
+      hostname,
+      path: "/g/123/gallery/?p=4",
+      html: "",
+      local: {
+        [progressKey]: { page: 18, offset: 0.3, path: "/mpv/123/gallery/" },
+        "eh-reader:progress:456": { page: 2, offset: 0, path: "/s/other/456-2" },
+      },
+    })
+    const write = vi.spyOn(page.Storage.prototype, "setItem")
+    start()
+    expectGalleryResume(18, "/mpv/123/gallery/#eh-reader-resume")
+    doc.body.insertAdjacentHTML(
+      "afterbegin",
+      `<h1 id="gn">Example gallery</h1>${listing}<a class="glink" href="/g/456/other/">Other gallery</a>`,
+    )
+    await settle()
+    expectGalleryResume(18, "/mpv/123/gallery/#eh-reader-resume")
+    const badges = doc.querySelectorAll(".eh-reader-progress")
+    expect(badges).toHaveLength(1)
+    expect(badges[0].getAttribute("href")).toBe("/s/other/456-2#eh-reader-resume")
+    expect(badges[0].previousElementSibling.textContent).toBe("Other gallery")
+    doc.getElementById("gn").replaceWith(doc.createElement("h1"))
+    await settle()
+    expectGalleryResume(18, "/mpv/123/gallery/#eh-reader-resume")
+    expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
+    expect(write).not.toHaveBeenCalled()
+  },
+)
+
+test.each([
+  undefined,
+  "{",
+  null,
+  [],
+  { page: 0, offset: 0, path: "/s/saved/123-1" },
+  { page: 1.5, offset: 0, path: "/mpv/123/gallery/" },
+  { page: 9007199254740992, offset: 0, path: "/mpv/123/gallery/" },
+  { page: 8, offset: -1, path: "/s/saved/123-8" },
+  { page: 8, offset: 2, path: "/s/saved/123-8" },
+  { page: 8, offset: "0", path: "/s/saved/123-8" },
+  { page: 8, offset: 0, path: "https://other.example/s/saved/123-8" },
+  { page: 8, offset: 0, path: "/s/saved/456-8" },
+  { page: 8, offset: 0, path: "/s/saved/123-9" },
+  { page: 8, offset: 0, path: "/s/saved/123-8?redirect=other" },
+])("does not show gallery resume for absent or unsafe progress %j", (progress) => {
+  setup({
+    path: "/g/123/gallery/",
+    html: '<h1 id="gn">Example gallery</h1>',
+    local: {
+      ...(progress === undefined ? {} : { [progressKey]: progress }),
+      "eh-reader:progress:456": { page: 2, offset: 0, path: "/s/other/456-2" },
+    },
+  })
+  const write = vi.spyOn(page.Storage.prototype, "setItem")
+  start()
+  expectGalleryResume(null)
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(true)
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+  expect(write).not.toHaveBeenCalled()
+})
+
+test.each(["/", "/favorites.php", "/?f_search=example"])(
+  "keeps title text badges and never selects a global resume target on %s",
+  (path) => {
+    setup({
+      path,
+      html: `${listing}<a class="glink" href="/g/456/other/">Other gallery</a>`,
+      local: {
+        [progressKey]: { page: 8, offset: 0.3, path: "/s/saved/123-8" },
+        "eh-reader:progress:456": { page: 2, offset: 0, path: "/mpv/456/other/" },
+      },
+    })
+    start()
+    expect(control("resume")?.hidden ?? true).toBe(true)
+    expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(2)
+    expect(
+      [...doc.querySelectorAll(".eh-reader-progress")].map((badge) => badge.textContent),
+    ).toEqual(["繼續閱讀：第 8 頁", "繼續閱讀：第 2 頁"])
+    expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(false)
+    expect(control("clear").getAttribute("aria-label")).toBe("清除閱讀紀錄")
+    expect(control("clear").textContent.trim()).toBe("")
+    expect(control("clear").querySelector("svg")).not.toBeNull()
+  },
+)
+
+test("cross-tab gallery progress updates the numeric badge, href and open tooltip, then hides the dock", async () => {
+  setup({ path: "/g/123/gallery/", html: "" })
+  start()
+  expectGalleryResume(null)
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(true)
+  for (const [number, path] of [
+    [8, "/s/saved/123-8"],
+    [123, "/mpv/123/gallery/"],
+  ]) {
+    changeProgress({ page: number, offset: 0.3, path })
+    await settle()
+    expectGalleryResume(number, `${path}#eh-reader-resume`)
+    expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(false)
+    control("resume").focus()
+    const tooltip = doc.getElementById("eh-reader-tooltip")
+    expect(tooltip.hidden).toBe(false)
+    expect(tooltip.querySelector("span").textContent).toBe(`繼續閱讀：第 ${number} 頁`)
+    expect(tooltip.querySelector("kbd").hidden).toBe(true)
+  }
+  changeProgress(null)
+  await settle()
+  expectGalleryResume(null)
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(true)
+  expect(doc.getElementById("eh-reader-tooltip").hidden).toBe(true)
+  expect(control("resume").hasAttribute("aria-describedby")).toBe(false)
+})
+
+test("other-gallery badges keep a gallery dock visible without providing its resume target", async () => {
+  setup({
+    path: "/g/123/gallery/",
+    html: '<a class="glink" href="/g/456/other/">Other gallery</a>',
+    local: {
+      [progressKey]: { page: 8, offset: 0.3, path: "/s/saved/123-8" },
+      "eh-reader:progress:456": { page: 2, offset: 0, path: "/s/other/456-2" },
+    },
+  })
+  start()
+  changeProgress(null)
+  await settle()
+  expectGalleryResume(null)
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(false)
+  expect(doc.querySelector(".eh-reader-progress").textContent).toBe("繼續閱讀：第 2 頁")
+  doc.querySelector(".glink").parentElement.removeChild(doc.querySelector(".glink"))
+  await settle()
+  expect(doc.querySelector(".eh-reader-progress")).toBeNull()
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(true)
+})
+
+test.each([
+  {},
+  { ctrlKey: true },
+  { metaKey: true },
+  { shiftKey: true },
+  { altKey: true },
+  { button: 1 },
+])("gallery resume retains native anchor navigation without storage writes for %j", (options) => {
+  const progress = { page: 8, offset: 0.3, path: "/s/saved/123-8" }
+  setup({ path: "/g/123/gallery/", html: "", local: { [progressKey]: progress } })
+  start()
+  const write = vi.spyOn(page.Storage.prototype, "setItem")
+  const type = options.button === 1 ? "auxclick" : "click"
+  const observed = vi.fn((event) => {
+    expect(event.defaultPrevented).toBe(false)
+    // Stop jsdom navigation only after the userscript's delegated handler runs.
+    event.preventDefault()
+  })
+  doc.addEventListener(type, observed, { once: true })
+  control("resume")
+    .querySelector("svg")
+    .firstElementChild.dispatchEvent(
+      new page.MouseEvent(type, { bubbles: true, cancelable: true, ...options }),
+    )
+  expect(observed).toHaveBeenCalledTimes(1)
+  flush()
+  expect(write).not.toHaveBeenCalled()
+  expect(saved()).toEqual(progress)
+  expect(page.sessionStorage.getItem(continuationKey)).toBeNull()
+  expectGalleryResume(8, "/s/saved/123-8#eh-reader-resume")
+})
+
+test.each(["/g/123/gallery/", "/?f_search=example"])(
+  "clear hides the last gallery/list record on %s but leaves its 2800 ms notice outside the dock",
+  (path) => {
+    setup({
+      path,
+      html: listing,
+      local: {
+        [progressKey]: { page: 8, offset: 0.3, path: "/s/saved/123-8" },
+        "eh-reader:progress:456": { page: 2, offset: 0, path: "/s/other/456-2" },
+        [preferenceKey]: { mode: "width", scale: 1 },
+        "eh-reader:progressive:unrelated": "keep",
+        unrelated: "keep",
+      },
+    })
+    const confirm = vi.spyOn(page, "confirm").mockReturnValue(true)
+    start()
+    vi.useFakeTimers()
+    try {
+      const toolbar = doc.getElementById("eh-reader-toolbar")
+      const status = doc.getElementById("eh-reader-status")
+      control("clear").focus()
+      control("clear")
+        .querySelector("svg")
+        .firstElementChild.dispatchEvent(
+          new page.MouseEvent("click", { bubbles: true, cancelable: true }),
+        )
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(saved()).toBeNull()
+      expect(saved("eh-reader:progress:456")).toBeNull()
+      expect(saved(preferenceKey)).toEqual({ mode: "width", scale: 1 })
+      expect(page.localStorage.getItem("eh-reader:progressive:unrelated")).toBe("keep")
+      expect(page.localStorage.getItem("unrelated")).toBe("keep")
+      expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+      expect(toolbar.hidden).toBe(true)
+      expect(doc.getElementById("eh-reader-tooltip").hidden).toBe(true)
+      expect(status.parentElement).toBe(toolbar.parentElement)
+      expect(toolbar.contains(status)).toBe(false)
+      expect(status.getAttribute("role")).toBe("status")
+      expect(status.classList.contains("eh-reader-status")).toBe(true)
+      expect(status.hidden).toBe(false)
+      expect(status.textContent).toContain("已清除本站閱讀紀錄")
+      expect(page.getComputedStyle(status).position).toBe("fixed")
+      expect(page.getComputedStyle(status).display).not.toBe("none")
+      vi.advanceTimersByTime(2799)
+      expect(status.textContent).toContain("已清除本站閱讀紀錄")
+      vi.advanceTimersByTime(1)
+      expect(status.textContent).toBe("")
+      expect(toolbar.hidden).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  },
+)
+
+test.each([false, true])(
+  "gallery clear preserves progress when deletion is canceled or fails (failure=%s)",
+  async (failure) => {
+    const progress = { page: 8, offset: 0.3, path: "/s/saved/123-8" }
+    setup({ path: "/g/123/gallery/", html: "", local: { [progressKey]: progress } })
+    vi.spyOn(page, "confirm").mockReturnValue(failure)
+    const remove = vi.spyOn(page.Storage.prototype, "removeItem")
+    if (failure)
+      remove.mockImplementation(() => {
+        throw new Error("blocked")
+      })
+    start()
+    control("clear").click()
+    await settle()
+    expect(saved()).toEqual(progress)
+    expectGalleryResume(8, "/s/saved/123-8#eh-reader-resume")
+    expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(false)
+    const status = doc.getElementById("eh-reader-status")
+    expect(status.textContent).not.toContain("已清除本站閱讀紀錄")
+    if (failure) {
+      expect(status.textContent).toContain("無法使用本機儲存")
+      expect(status.hidden).toBe(false)
+      expect(status.closest("#eh-reader-toolbar")).toBeNull()
+      expect(page.getComputedStyle(doc.getElementById("eh-reader-toolbar")).width).toBe("64px")
+    } else expect(remove).not.toHaveBeenCalled()
+  },
+)
+
+test("a gallery storage error remains readable without saved progress or a wide dock", () => {
+  setup({ path: "/g/123/gallery/", html: "" })
+  vi.spyOn(page, "localStorage", "get").mockImplementation(() => {
+    throw new Error("blocked")
+  })
+  start()
+  vi.useFakeTimers()
+  try {
+    const toolbar = doc.getElementById("eh-reader-toolbar")
+    const status = doc.getElementById("eh-reader-status")
+    expect(toolbar.hidden).toBe(false)
+    expectGalleryResume(null)
+    expect(status.textContent).toContain("無法使用本機儲存")
+    expect(status.hidden).toBe(false)
+    expect(status.parentElement).toBe(toolbar.parentElement)
+    expect(page.getComputedStyle(toolbar).width).toBe("64px")
+    vi.advanceTimersByTime(3000)
+    expect(status.textContent).toContain("無法使用本機儲存")
+    expect(page.getComputedStyle(status).display).not.toBe("none")
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test("dynamic result href and title changes update badges and dock visibility without choosing a global resume", async () => {
+  setup({
+    path: "/favorites.php",
+    html: '<a id="result" class="glink" href="/g/123/gallery/">Gallery title</a>',
+    local: {
+      [progressKey]: { page: 8, offset: 0.3, path: "/s/saved/123-8" },
+      "eh-reader:progress:456": { page: 2, offset: 0, path: "/mpv/456/other/" },
+    },
+  })
+  start()
+  const result = doc.getElementById("result")
+  result.href = "/g/456/other/"
+  await settle()
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
+  expect(doc.querySelector(".eh-reader-progress").getAttribute("href")).toBe(
+    "/mpv/456/other/#eh-reader-resume",
+  )
+  result.textContent = ""
+  await settle()
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(true)
+  result.textContent = "Restored title"
+  await settle()
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(1)
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(false)
+  result.href = "https://other.example/g/456/other/"
+  await settle()
+  expect(doc.querySelectorAll(".eh-reader-progress")).toHaveLength(0)
+  expect(doc.getElementById("eh-reader-toolbar").hidden).toBe(true)
+  expect(control("resume")?.hidden ?? true).toBe(true)
 })
 
 test("same-document single-reader navigation updates page identity before the next save", async () => {

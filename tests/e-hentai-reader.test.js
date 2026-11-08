@@ -170,7 +170,7 @@ test("the exact installation source has standalone metadata and source update UR
     )
   expect(values("name")).toEqual(["E-Hentai Reader"])
   expect(values("namespace")).toEqual(["userscripts/e-hentai-reader"])
-  expect(values("version")).toEqual(["0.4.2"])
+  expect(values("version")).toEqual(["0.5.0"])
   expect(values("grant")).toEqual(["none"])
   expect(values("run-at")).toEqual(["document-idle"])
   expect(values("license")).toEqual(["AGPL-3.0-only"])
@@ -1236,10 +1236,10 @@ test("uses only local storage and no network or credential APIs during the reade
   expect(doc.getElementById("img").getAttribute("src")).toBe(imageSrc)
   expect(doc.querySelectorAll("script, link, iframe")).toHaveLength(0)
   expect(Object.keys(page.localStorage).sort()).toEqual([
-    "eh-reader:preferences",
+    "eh-reader:preferences:123",
     "eh-reader:progress:123",
   ])
-  expect(JSON.parse(page.localStorage.getItem("eh-reader:preferences"))).toEqual({
+  expect(JSON.parse(page.localStorage.getItem("eh-reader:preferences:123"))).toEqual({
     mode: "native",
     scale: 1,
   })

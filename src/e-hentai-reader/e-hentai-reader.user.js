@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         E-Hentai Reader
 // @namespace    userscripts/e-hentai-reader
-// @version      0.4.2
+// @version      0.5.0
 // @description  Zoom reader images, remember view settings, and resume reading from locally saved progress.
 // @match        https://e-hentai.org/*
 // @match        https://exhentai.org/*
@@ -653,16 +653,9 @@
   /** @typedef {{node: Element, x: number, y: number, rx: number, ry: number}} Anchor */
   /** @type {Map<HTMLElement, Page>} */
   let pages = new Map()
-  const preference = readStored(preferenceKey)
+  const preference = readPreference(gallery.id)
   /** @type {ViewMode} */
-  let mode =
-    preference &&
-    ["native", "manual", "width", "height"].includes(preference.mode) &&
-    Number.isFinite(preference.scale) &&
-    preference.scale >= minScale &&
-    preference.scale <= maxScale
-      ? preference.mode
-      : "native"
+  let mode = preference.mode
   let manualScale = mode === "manual" ? preference.scale : 1
   let pendingProgress = request?.progress ?? (continuing ? null : readProgress(gallery.id))
   let recording = !pendingProgress
@@ -1092,13 +1085,38 @@
       }
       resumeRequested = Boolean(request)
       restoredProgress = null
-      updateControls()
+      if (changedGallery) {
+        const preference = readPreference(gallery.id)
+        mode = preference.mode
+        manualScale = mode === "manual" ? preference.scale : 1
+        render()
+      } else updateControls()
     }
     return true
   }
 
+  /** @param {string} id @returns {{mode: ViewMode, scale: number}} */
+  function readPreference(id) {
+    for (const key of [`${preferenceKey}:${id}`, preferenceKey]) {
+      const value = readStored(key)
+      if (
+        value &&
+        ["native", "manual", "width", "height"].includes(value.mode) &&
+        Number.isFinite(value.scale) &&
+        value.scale >= minScale &&
+        value.scale <= maxScale
+      )
+        return { mode: value.mode, scale: value.scale }
+    }
+    return { mode: "native", scale: 1 }
+  }
+
   function savePreference() {
-    writeStored(preferenceKey, { mode, scale: mode === "manual" ? manualScale : 1 })
+    if (!syncLocation()) return
+    writeStored(`${preferenceKey}:${gallery.id}`, {
+      mode,
+      scale: mode === "manual" ? manualScale : 1,
+    })
     updateControls()
   }
 

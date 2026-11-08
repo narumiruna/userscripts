@@ -7,6 +7,7 @@ const source = readFileSync(
   "utf8",
 )
 const preferenceKey = "eh-reader:preferences"
+const galleryPreferenceKey = `${preferenceKey}:123`
 const progressKey = "eh-reader:progress:123"
 const continuationKey = "eh-reader:continue"
 const single = `<div id="i3"><a id="next" href="/s/next/123-2"><img id="img" width="1000" height="2000"></a></div>`
@@ -180,20 +181,22 @@ test.each(
     ),
   ),
 )(
-  "persists %s view preference across reload/navigation (MPV=%s, action=%s)",
+  "persists %s gallery view preference across reload/navigation (MPV=%s, action=%s)",
   (hostname, mpv, action) => {
     const path = mpv ? "/mpv/123/gallery/" : "/s/token/123-1"
     setup({ path, hostname })
     start()
     control("in").click()
     control(action).click()
-    const preference = saved(preferenceKey)
+    const preference = saved(galleryPreferenceKey)
+    expect(saved(preferenceKey)).toBeNull()
     expect(preference).toEqual({
       mode: action === "in" ? "manual" : action === "reset" ? "native" : action,
       scale: action === "in" ? expect.closeTo(1.21) : 1,
     })
     reopen(mpv ? path : "/s/next/123-2")
-    expect(saved(preferenceKey)).toEqual(preference)
+    expect(saved(galleryPreferenceKey)).toEqual(preference)
+    expect(saved(preferenceKey)).toBeNull()
     expect(control("width").getAttribute("aria-pressed")).toBe(String(action === "width"))
     expect(control("height").getAttribute("aria-pressed")).toBe(String(action === "height"))
     expect(doc.querySelector("output").textContent).toBe(
@@ -212,6 +215,216 @@ test.each(
     expect(doc.documentElement.scrollTop).toBe(0)
   },
 )
+
+test.each(
+  ["e-hentai.org", "exhentai.org"].flatMap((hostname) =>
+    [false, true].map((mpv) => [hostname, mpv]),
+  ),
+)("keeps gallery zoom independent across A/B visits on %s (MPV=%s)", (hostname, mpv) => {
+  const legacy = { mode: "manual", scale: 1.5 }
+  const first = mpv ? "/mpv/123/first/" : "/s/first/123-1"
+  const second = mpv ? "/mpv/456/second/" : "/s/second/456-1"
+  setup({ hostname, path: first, local: { [preferenceKey]: legacy } })
+  start()
+  control("in").click()
+  const firstPreference = saved(galleryPreferenceKey)
+  expect(firstPreference).toEqual({ mode: "manual", scale: expect.closeTo(1.65) })
+  reopen(second)
+  expect(doc.querySelector("output").textContent).toBe("150%")
+  expect(saved(`${preferenceKey}:456`)).toBeNull()
+  control("height").click()
+  expect(saved(`${preferenceKey}:456`)).toEqual({ mode: "height", scale: 1 })
+  reopen(first)
+  expect(doc.querySelector("output").textContent).toBe("165%")
+  expect(saved(galleryPreferenceKey)).toEqual(firstPreference)
+  expect(saved(preferenceKey)).toEqual(legacy)
+})
+
+test.each(["in", "width", "height", "reset"])(
+  "shares a gallery's %s setting between single-image and MPV readers",
+  (action) => {
+    setup()
+    start()
+    control("in").click()
+    control(action).click()
+    const preference = saved(galleryPreferenceKey)
+    reopen("/mpv/123/gallery/")
+    expect(saved(galleryPreferenceKey)).toEqual(preference)
+    expect(control("width").getAttribute("aria-pressed")).toBe(String(action === "width"))
+    expect(control("height").getAttribute("aria-pressed")).toBe(String(action === "height"))
+    if (action === "in") expect(doc.querySelector("output").textContent).toBe("121%")
+    if (action === "reset") expect(doc.querySelector("output").textContent).toBe("100%")
+    reopen("/s/next/123-2")
+    expect(saved(galleryPreferenceKey)).toEqual(preference)
+    expect(saved(preferenceKey)).toBeNull()
+  },
+)
+
+test.each([false, true])(
+  "restores the gallery setting before explicit resume without preference writes (MPV=%s)",
+  (mpv) => {
+    const local = {
+      [preferenceKey]: { mode: "height", scale: 1 },
+      [galleryPreferenceKey]: { mode: "manual", scale: 1.5 },
+      [progressKey]: mpv
+        ? { page: 2, offset: 0.5, path: "/mpv/123/gallery/" }
+        : { page: 1, offset: 0.4, path: "/s/token/123-1" },
+    }
+    setup({
+      path: mpv
+        ? "/mpv/123/gallery/?eh-reader-resume=2:0.5#page2"
+        : "/s/token/123-1#eh-reader-resume",
+      local,
+    })
+    if (mpv) loadSecond()
+    const write = vi.spyOn(page.Storage.prototype, "setItem")
+    start()
+    expect(doc.querySelector("output").textContent).toBe("150%")
+    expect(mpv ? doc.getElementById("pane_images").scrollTop : doc.documentElement.scrollTop).toBe(
+      mpv ? 2620 : 896,
+    )
+    expectPendingResume(null)
+    expect(write.mock.calls.filter(([key]) => key.startsWith(preferenceKey))).toHaveLength(0)
+    expect(saved(preferenceKey)).toEqual(local[preferenceKey])
+    expect(saved(galleryPreferenceKey)).toEqual(local[galleryPreferenceKey])
+  },
+)
+
+test.each(
+  [false, true].flatMap((legacy) =>
+    [
+      "{",
+      null,
+      [],
+      { mode: "other", scale: 1 },
+      { mode: "manual", scale: "2" },
+      { mode: "manual", scale: 0 },
+      { mode: "manual", scale: 9 },
+      { mode: "width" },
+    ].map((preference) => [legacy, preference]),
+  ),
+)(
+  "invalid gallery preference falls back without changing storage (legacy=%s, value=%j)",
+  (legacy, preference) => {
+    setup({
+      local: {
+        [galleryPreferenceKey]: preference,
+        ...(legacy ? { [preferenceKey]: { mode: "manual", scale: 1.5 } } : {}),
+      },
+    })
+    const before = page.localStorage.getItem(galleryPreferenceKey)
+    const write = vi.spyOn(page.Storage.prototype, "setItem")
+    start()
+    expect(doc.querySelector("output").textContent).toBe(legacy ? "150%" : "100%")
+    expect(page.localStorage.getItem(galleryPreferenceKey)).toBe(before)
+    expect(write).not.toHaveBeenCalled()
+  },
+)
+
+test.each([false, true])(
+  "passive startup and layout do not create gallery preferences (MPV=%s)",
+  async (mpv) => {
+    const legacy = { mode: "manual", scale: 1.5 }
+    setup({
+      path: mpv ? "/mpv/123/gallery/" : "/s/token/123-1",
+      local: { [preferenceKey]: legacy },
+    })
+    const write = vi.spyOn(page.Storage.prototype, "setItem")
+    start()
+    page.dispatchEvent(new page.Event("resize"))
+    doc.dispatchEvent(new page.Event("scroll"))
+    await settle()
+    flush()
+    stop()
+    expect(saved(galleryPreferenceKey)).toBeNull()
+    expect(saved(preferenceKey)).toEqual(legacy)
+    expect(write.mock.calls.filter(([key]) => key.startsWith(preferenceKey))).toHaveLength(0)
+  },
+)
+
+test("reset changes only the current gallery and overrides its legacy fallback", () => {
+  const legacy = { mode: "manual", scale: 1.5 }
+  const other = { mode: "manual", scale: 0.8 }
+  setup({
+    local: {
+      [preferenceKey]: legacy,
+      [galleryPreferenceKey]: { mode: "manual", scale: 2 },
+      [`${preferenceKey}:456`]: other,
+    },
+  })
+  start()
+  expect(doc.querySelector("output").textContent).toBe("200%")
+  control("reset").click()
+  expect(saved(galleryPreferenceKey)).toEqual({ mode: "native", scale: 1 })
+  reopen("/s/token/123-1")
+  expect(doc.querySelector("output").textContent).toBe("100%")
+  reopen("/s/other/456-1")
+  expect(doc.querySelector("output").textContent).toBe("80%")
+  expect(saved(`${preferenceKey}:456`)).toEqual(other)
+  expect(saved(preferenceKey)).toEqual(legacy)
+})
+
+test.each([false, true])(
+  "same-document gallery preference loads before lifecycle saves and scale actions (MPV=%s)",
+  (mpv) => {
+    const progress = { page: 8, offset: 0.3, path: "/s/saved/456-8" }
+    setup({
+      path: mpv ? "/mpv/123/first/" : "/s/first/123-1",
+      local: {
+        [galleryPreferenceKey]: { mode: "manual", scale: 2 },
+        [`${preferenceKey}:456`]: { mode: "height", scale: 1 },
+        "eh-reader:progress:456": progress,
+      },
+    })
+    start()
+    page.history.replaceState(null, "", mpv ? "/mpv/456/second/" : "/s/second/456-2")
+    flush()
+    expect(control("height").getAttribute("aria-pressed")).toBe("true")
+    expect(doc.getElementById("eh-reader-style").textContent).toContain(
+      `--ehr-height: ${mpv ? "618.000" : "744.000"}px`,
+    )
+    expect(saved("eh-reader:progress:456")).toEqual(progress)
+    control("in").click()
+    expect(saved(`${preferenceKey}:456`)).toEqual({
+      mode: "manual",
+      scale: expect.closeTo(((mpv ? 618 : 744) / 2000) * 1.1),
+    })
+    expect(saved(galleryPreferenceKey)).toEqual({ mode: "manual", scale: 2 })
+    expect(saved("eh-reader:progress:456")).toEqual(progress)
+  },
+)
+
+test("preference storage events leave the active view stable until reload", () => {
+  setup({ local: { [galleryPreferenceKey]: { mode: "manual", scale: 1.5 } } })
+  start()
+  const newer = JSON.stringify({ mode: "manual", scale: 0.8 })
+  page.localStorage.setItem(galleryPreferenceKey, newer)
+  page.dispatchEvent(
+    new page.StorageEvent("storage", { key: galleryPreferenceKey, newValue: newer }),
+  )
+  expect(doc.querySelector("output").textContent).toBe("150%")
+  reopen("/s/token/123-1")
+  expect(doc.querySelector("output").textContent).toBe("80%")
+})
+
+test("a failed gallery preference write keeps zoom working without rewriting the legacy default", () => {
+  const legacy = { mode: "manual", scale: 1.5 }
+  setup({ local: { [preferenceKey]: legacy } })
+  const setItem = page.Storage.prototype.setItem
+  const write = vi
+    .spyOn(page.Storage.prototype, "setItem")
+    .mockImplementation(function (key, value) {
+      if (key === galleryPreferenceKey) throw new Error("quota")
+      return setItem.call(this, key, value)
+    })
+  start()
+  control("in").click()
+  expect(doc.querySelector("output").textContent).toBe("165%")
+  expect(saved(galleryPreferenceKey)).toBeNull()
+  expect(saved(preferenceKey)).toEqual(legacy)
+  expect(write.mock.calls.map(([key]) => key)).toEqual([galleryPreferenceKey])
+  expect(doc.getElementById("eh-reader-status").textContent).toContain("變更不會保存")
+})
 
 test.each([
   "{",
@@ -745,6 +958,8 @@ test("clear history affects only owned progress keys, preserves preferences, and
     local: {
       unrelated: "keep",
       [preferenceKey]: { mode: "width", scale: 1 },
+      [galleryPreferenceKey]: { mode: "manual", scale: 1.5 },
+      [`${preferenceKey}:456`]: { mode: "height", scale: 1 },
       [progressKey]: { page: 1, offset: 0.4, path: "/s/token/123-1" },
       "eh-reader:progress:456": { page: 1, offset: 0, path: "/s/token/456-1" },
     },
@@ -760,6 +975,8 @@ test("clear history affects only owned progress keys, preserves preferences, and
   expect(page.localStorage.getItem("eh-reader:progress:456")).toBeNull()
   expect(page.localStorage.getItem("unrelated")).toBe("keep")
   expect(saved(preferenceKey)).toEqual({ mode: "width", scale: 1 })
+  expect(saved(galleryPreferenceKey)).toEqual({ mode: "manual", scale: 1.5 })
+  expect(saved(`${preferenceKey}:456`)).toEqual({ mode: "height", scale: 1 })
 })
 
 test("canceling clear history keeps the saved record", () => {

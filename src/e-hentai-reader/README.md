@@ -1,6 +1,6 @@
 # E-Hentai Reader
 
-Zoom reader images, save view settings, and resume from a locally saved reading position. Gallery pages combine resume and clear-history icons in one toolbar. Gallery lists keep a resume link beside each saved title.
+Zoom reader images, save view settings for each gallery, and resume from a locally saved reading position. Gallery pages combine resume and clear-history icons in one toolbar. Gallery lists keep a resume link beside each saved title.
 
 [Source](e-hentai-reader.user.js) · [Reader toolbar preview](toolbar-preview.html) · [Gallery toolbar preview](gallery-toolbar-preview.html) · [Shared installation instructions](../../README.md#install).
 
@@ -26,7 +26,7 @@ Gallery pages use the same icon style. A bookmark-and-arrow link with a saved-pa
 | Plus / minus icons or `+` / `=` / `-` | Multiply/divide image size by 1.1 around the reading-area center.                       |
 | Horizontal-arrow icon / Shift + W     | Fit each page to the reading-area width. Show the start of the current page.            |
 | Vertical-arrow icon / Shift + H       | Fit each page to the reading-area height. Leave space for the controls.                 |
-| Counterclockwise-arrow icon / `0`     | Restore the site's image dimensions and save native size as the view preference.        |
+| Counterclockwise-arrow icon / `0`     | Restore the site's image dimensions and save native size for this gallery.              |
 | Bookmark-and-arrow icon               | Resume the saved page and relative vertical position.                                   |
 | Location-pin icon                     | Replace the pending saved position with the current position, without a jump.           |
 | Trash-can icon                        | After confirmation, remove this site's saved reading history. Keep the view preference. |
@@ -65,11 +65,15 @@ Relative position is measured from the reading area's top edge within the curren
 
 ## Saved view settings
 
-The last explicit native-size, manual-scale, fit-width, or fit-height choice is saved for the current site. It is shared across galleries and both reader types on that site.
+The last explicit native-size, manual-scale, fit-width, or fit-height choice is saved separately for each gallery on the current site. A gallery's single-image reader and MPV share that setting. Changing gallery B does not replace gallery A's setting.
 
-The preference is applied on the next reader page, including reloads and single-image page changes. Restoring a fit preference does not intentionally move to the page start; selecting a fit control does. Fit modes use the current viewport rather than saved pixel dimensions. Reset changes the saved preference to native size.
+The reader uses a valid gallery setting first, then a valid legacy site-wide setting, then native size. The legacy `eh-reader:preferences` value is only a fallback: the script does not update, migrate, or delete it. A gallery with no setting keeps using that fallback until an explicit zoom, fit, or reset action saves its own choice. Opening, scrolling, resizing, resuming, or leaving a reader does not create a zoom setting.
 
-Scaling is relative to the site's current dimensions, not necessarily the original file resolution. Native image resizing after a window-size change still applies. Reset restores the site's layout, not browser zoom.
+The setting is applied on reopen, single-image page changes, and same-document changes to another gallery, before restoring a saved reading position. Restoring a fit preference does not intentionally move to the page start; selecting a fit control does. Fit modes use the current viewport rather than saved pixel dimensions. Reset saves native size only for the current gallery.
+
+An already-open view does not change when another tab saves a zoom setting. Reload the reader or re-enter the gallery to use that change. Clearing reading history retains both gallery settings and the legacy fallback.
+
+Manual scale is relative to the site's current image dimensions, not necessarily the original file resolution. The same factor can produce different pixel dimensions in different reader layouts. Native image resizing after a window-size change still applies. Reset restores the site's layout, not browser zoom.
 
 ## Behavior and limits
 
@@ -90,17 +94,26 @@ To remove page changes, disable the script and reload. Saved data remains until 
 
 ## Privacy
 
-- Persistent data uses `localStorage` keys `eh-reader:preferences` and `eh-reader:progress:<gallery ID>`. A tab-local `eh-reader:continue` key in `sessionStorage` holds the expected next reader path until it is consumed.
+- Persistent data uses `localStorage` keys `eh-reader:preferences:<gallery ID>` for gallery zoom, `eh-reader:preferences` for the read-only legacy fallback, and `eh-reader:progress:<gallery ID>` for reading progress. A tab-local `eh-reader:continue` key in `sessionStorage` holds the expected next reader path until it is consumed.
+- Gallery zoom records contain only the mode and scale. They do not add zoom data to resume URLs.
 - Reader paths contain the site's gallery or image-link token. The script does not store query strings, gallery titles, tags, image file URLs, credentials, or cookies.
 - Storage is not encrypted. Same-origin site scripts and other scripts with page access can read it. All accounts using the same origin and browser storage share it.
 - E-Hentai and ExHentai keep separate data. The script does not sync between origins, browsers, or devices.
 - An MPV resume URL contains the selected page and relative offset. The browser sends this query with the navigation to the site and can keep it in history. The script removes it from the current URL after restoration.
-- Clearing history removes only the script's progress keys, not view preferences or other site data.
+- Clearing history removes only the script's progress keys, not view preferences or other site data. Gallery IDs with saved zoom settings therefore remain in site storage. Browser site-data controls can remove those settings.
 - The script has no runtime dependencies. It uses `@grant none` and `@noframes`, adds no background network requests, and does not log gallery data.
 
 Each native reader still loads images under its normal rules. Smaller images can put more pages in view. Explicit resume and normal navigation can cause the site to load the selected page and nearby images.
 
 ## Validation
+
+### Version 0.5.0
+
+Version 0.5.0 passed `npm run ci`: formatting, lint, JavaScript type checks, and all 834 Vitest/jsdom tests, including 292 reader tests. Checks ran in an isolated LF worktree to preserve the CRLF checkout. Thirty-three new cases cover gallery isolation on both origins, reader-type sharing, gallery-first lookup, validated fallback, same-document changes, reset, pending resume, passive startup, storage failures, and stable active views. Existing clear-history and lifecycle checks now verify gallery preference keys.
+
+Headless Chromium 158.0.8127.18 passed ten neutral browser checks across both origins. They covered different A/B gallery settings, single-image/MPV sharing, viewport-dependent fit modes, invalid and missing preferences, same-document gallery changes, pending progress, reset and history-clear retention, real cross-tab updates, origin isolation, and idle DOM/layout stability. Single-image resume and MPV resume after delayed native startup retained the gallery's scale and restored relative offsets within 0.003. No page errors or unexpected external requests occurred.
+
+This update was not installed in a userscript manager or checked on live galleries. After installing 0.5.0, reload existing reader tabs to activate it. Neutral fixtures do not establish live-site injection behavior or subjective visual acceptance.
 
 ### Version 0.4.2
 

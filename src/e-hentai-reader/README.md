@@ -50,13 +50,16 @@ The script preserves native page navigation, including arrow keys, Space, and un
 - An ordinary visit does not jump to a saved position. While resume is pending, startup, resizing, restored view settings, programmatic scrolling, and page exit do not replace it.
   - Select **繼續閱讀** to resume, or **從此處閱讀** to start at the current position.
   - Native reading input, such as ordinary scrolling, supported navigation keys, or page navigation, also selects the current position and dismisses the pending resume.
-- Resume links on gallery lists and gallery pages open the saved reader. Single-image links use `#eh-reader-resume`. MPV links use `?eh-reader-resume=1#pageN` so native startup can select the saved page without removing the resume request. After restoration, the script removes its marker and keeps MPV's native `#pageN` fragment. Ctrl/Meta/Shift-click keeps the browser's link behavior.
+- Resume links on gallery lists and gallery pages open the saved reader. Single-image links use `#eh-reader-resume`. MPV links use `?eh-reader-resume=N:O#pageN`, where `N` is the page and `O` is its relative offset from 0 to 1. This snapshot keeps the selected position if storage changes before the reader opens. After restoration, the script removes its marker and keeps MPV's native `#pageN` fragment. Ctrl/Meta/Shift-click keeps the browser's link behavior.
+  - Older `?eh-reader-resume=1#pageN` links remain supported. If their native page differs from the stored record, resume uses that page's start; the old link does not contain an offset to recover.
 - A single-image reader can navigate to the saved reader path. MPV can resume the saved page within its current viewer, even when the record came from a single-image reader.
 - MPV first scrolls to an unloaded target to let the native viewer load it. It applies the saved offset again after the image becomes available. A missing or failed target leaves the saved record unchanged; starting elsewhere cancels the pending restoration.
+  - Pending restoration can finish in a background tab even when the browser suspends animation frames.
   - After restoration, MPV keeps the saved page and offset through delayed native startup and image resizing. Passive updates do not replace that record. Reading input or an explicit view change releases the restored position. Native reading keys also work when a toolbar control has focus.
-- Native same-tab single-image links use a one-use `sessionStorage` handoff. It is bound to the destination path and is consumed on arrival, including same-document navigation. A later reload offers resume normally.
+- Native same-tab navigation between different single-image reader paths uses a one-use `sessionStorage` handoff. It is bound to the destination path and is consumed on arrival, including same-document navigation. A later reload offers resume normally.
+  - MPV page and thumbnail links do not create handoffs. Old MPV handoffs are consumed but ignored. An explicit resume request takes priority over a handoff.
 - A progress update from another tab pauses local writes and offers the newer position without moving the current page. New local reading input can replace that position. Gallery links and saved-page badges update when storage changes.
-- Clear history cancels pending writes. Passive layout updates and page exit do not recreate the cleared record. New reading input can start a new record.
+- Clear history cancels pending writes and removes a pending resume marker. Starting elsewhere or receiving a progress change from another tab also cancels that marker. Passive layout updates and page exit do not recreate the cleared record. New reading input can start a new record.
 
 Relative position is measured from the reading area's top edge within the current image. Horizontal scroll position is not saved. Restoration is limited by the available scroll range. Changes to image dimensions or site navigation can affect the final position.
 
@@ -90,13 +93,26 @@ To remove page changes, disable the script and reload. Saved data remains until 
 - Persistent data uses `localStorage` keys `eh-reader:preferences` and `eh-reader:progress:<gallery ID>`. A tab-local `eh-reader:continue` key in `sessionStorage` holds the expected next reader path until it is consumed.
 - Reader paths contain the site's gallery or image-link token. The script does not store query strings, gallery titles, tags, image file URLs, credentials, or cookies.
 - Storage is not encrypted. Same-origin site scripts and other scripts with page access can read it. All accounts using the same origin and browser storage share it.
-- E-Hentai and ExHentai keep separate data. The script does not sync between origins, browsers, or devices, and does not send history to a server.
+- E-Hentai and ExHentai keep separate data. The script does not sync between origins, browsers, or devices.
+- An MPV resume URL contains the selected page and relative offset. The browser sends this query with the navigation to the site and can keep it in history. The script removes it from the current URL after restoration.
 - Clearing history removes only the script's progress keys, not view preferences or other site data.
 - The script has no runtime dependencies. It uses `@grant none` and `@noframes`, adds no background network requests, and does not log gallery data.
 
 Each native reader still loads images under its normal rules. Smaller images can put more pages in view. Explicit resume and normal navigation can cause the site to load the selected page and nearby images.
 
 ## Validation
+
+### Version 0.4.2
+
+Version 0.4.2 passed `npm run ci`: formatting, lint, JavaScript type checks, and all 801 Vitest/jsdom tests, including 259 reader tests. Full CI used an LF copy with the changed files applied to preserve the existing CRLF checkout. Twenty-one new cases cover resume snapshots, replaced or missing records, legacy page disagreement, MPV handoff suppression, native hash navigation, explicit single-image resume, background loading without animation frames, cancellation, and invalid request data.
+
+A replay against 0.4.1 showed that native MPV hash links could leave a single-image continuation marker. That marker could suppress explicit resume on the next load and allow page 1 to replace the saved record. Another replay showed that a legacy link to a later page used page 1 when storage had already changed to page 1.
+
+The installed 0.4.2 source was read back and matched the repository source. A temporary URL-scoped diagnostic script checked an authorized live ExHentai MPV with 46 pages. Before the fix ran, its record was page 1 while its explicit legacy link requested page 12. The corrected reader restored page 12 in a hidden tab, loaded the target image, removed the resume query, and retained page 12 at the page start through the 10-second check. The target image started within 1 px of the expected reading-area offset. The fit-height preference stayed unchanged. The temporary script was removed; the reader retains `@grant none` and adds no diagnostic logging.
+
+The original page-12 offset was not available in the replaced record or legacy URL, so this check restored only the page start. It did not recover the old offset. Live checks read DOM geometry and loading state, not gallery content or image URLs; they do not establish behavior for all galleries. Reload other existing MPV tabs to load 0.4.2; their injection was not checked.
+
+Headless Chromium 158.0.8127.18 also passed the 12 neutral MPV combinations on both origins: early/late injection, native size, fit-width, and 10% scale. Gallery resume, delayed resets, target replacement, idle refresh, toolbar-focused PageDown, native wheel/D navigation, history clearing, retained preferences, and ordinary visits passed. Saved relative offsets matched within 0.003. No page errors occurred.
 
 ### Version 0.4.1
 

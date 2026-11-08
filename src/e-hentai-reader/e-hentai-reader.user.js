@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         E-Hentai Reader
 // @namespace    userscripts/e-hentai-reader
-// @version      0.3.0
+// @version      0.4.0
 // @description  Zoom reader images, remember view settings, and resume reading from locally saved progress.
 // @match        https://e-hentai.org/*
 // @match        https://exhentai.org/*
@@ -123,48 +123,400 @@
     }
   }
 
+  function toolbarCss() {
+    return `
+    #${toolbarId}, #eh-reader-status { --ehr-edge: 24px; }
+    #${toolbarId} {
+      position: fixed;
+      right: var(--ehr-edge);
+      bottom: var(--ehr-edge);
+      z-index: 2147483647;
+      width: 64px;
+      box-sizing: border-box;
+      padding: 9px;
+      border: 1px solid #484b52;
+      border-radius: 14px;
+      background: #25262a;
+      color: #e6e7ea;
+      box-shadow: 0 8px 32px #0005, 0 1px 3px #0006;
+      font: 13px/1.6 system-ui, sans-serif;
+      text-align: center;
+    }
+    #${toolbarId} * { box-sizing: border-box; }
+    #${toolbarId} .eh-reader-controls {
+      max-height: calc(100dvh - 2 * var(--ehr-edge) - 20px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: none;
+    }
+    #${toolbarId} .eh-reader-controls::-webkit-scrollbar { display: none; }
+    #${toolbarId} .eh-reader-group {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+    #${toolbarId} .eh-reader-divider {
+      display: block; height: 1px; margin: 7px 6px; background: #ffffff13;
+    }
+    #${toolbarId} button, #${toolbarId} a {
+      position: relative;
+      appearance: none;
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      flex: none;
+      margin: 0;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: #c5c8d0;
+      box-shadow: none;
+      font: inherit;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    #${toolbarId} button:hover:not(:disabled), #${toolbarId} a:hover {
+      background: #373940; color: #fff;
+    }
+    #${toolbarId} button[aria-pressed="true"] {
+      border-color: #a8c7fa26; background: #a8c7fa1c; color: #c1d8ff;
+    }
+    #${toolbarId} button:focus-visible, #${toolbarId} a:focus-visible {
+      outline: 2px solid #a8c7fa; outline-offset: -3px;
+    }
+    #${toolbarId} button:disabled { opacity: .3; cursor: default; }
+    #${toolbarId} [data-action="resume"] { color: #a8c7fa; }
+    #${toolbarId} [data-action="clear"] { color: #9da1ac; }
+    #${toolbarId} [data-action="clear"]:hover { background: #ed8e8e19; color: #f1a3a3; }
+    #${toolbarId} svg {
+      display: block; width: 20px; height: 20px; fill: none; stroke: currentColor;
+      stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+    }
+    #${toolbarId} .eh-reader-page-badge {
+      position: absolute; right: 2px; bottom: 2px; min-width: 15px; max-width: 36px;
+      height: 15px; padding: 0 3px; overflow: hidden; border: 1px solid #6d86ab;
+      border-radius: 4px; background: #33435c; color: #e0ebff;
+      font-size: 9px; line-height: 13px; font-variant-numeric: tabular-nums;
+      white-space: nowrap; text-overflow: ellipsis; text-align: center;
+    }
+    #${toolbarId} #eh-reader-position {
+      display: flex; justify-content: center; align-items: center; gap: 4px;
+      height: 30px; color: #b6bac5; font-size: 12px; font-variant-numeric: tabular-nums;
+    }
+    #${toolbarId} #eh-reader-position svg { width: 14px; height: 14px; }
+    #${toolbarId} output {
+      display: block; width: 44px; padding: 2px 0; color: #e8eaf0;
+      font-size: 11px; font-weight: 500; line-height: 20px; font-variant-numeric: tabular-nums;
+    }
+    #${toolbarId} .eh-reader-tooltip, #eh-reader-status {
+      position: fixed; width: max-content; padding: 8px 11px; border: 1px solid #4c4f58;
+      border-radius: 7px; background: #303239; color: #f1f3f7;
+      box-shadow: 0 4px 16px #0004; font: 12px/1.6 system-ui, sans-serif; text-align: left;
+      overflow-wrap: anywhere;
+    }
+    #${toolbarId} .eh-reader-tooltip {
+      display: flex; align-items: center; gap: 16px;
+      max-width: calc(100vw - var(--ehr-edge) - 88px); pointer-events: none;
+    }
+    #${toolbarId} .eh-reader-tooltip kbd {
+      color: #b4b9c5; font: 11px/1.4 system-ui, sans-serif; white-space: nowrap;
+    }
+    #eh-reader-status {
+      z-index: 2147483647; box-sizing: border-box;
+      right: calc(var(--ehr-edge) + 76px); bottom: calc(var(--ehr-edge) + 4px);
+      max-width: min(340px, calc(100vw - var(--ehr-edge) - 96px)); pointer-events: none;
+    }
+    #eh-reader-status:empty { display: none; }
+    @media (max-width: 900px) { #${toolbarId}, #eh-reader-status { --ehr-edge: 18px; } }
+    @media (max-width: 520px) { #${toolbarId}, #eh-reader-status { --ehr-edge: 12px; } }
+    #${toolbarId}[hidden], #${toolbarId} [hidden] { display: none; }
+    `
+  }
+
+  /** @type {Record<string, string>} */
+  const iconPaths = {
+    in: "M12 5v14M5 12h14",
+    out: "M5 12h14",
+    width: "M4 4v16M20 4v16M8 12h8m-5-3-3 3 3 3m2-6 3 3-3 3",
+    height: "M4 4h16M4 20h16M12 8v8m-3-5 3-3 3 3m-6 2 3 3 3-3",
+    reset: "M3 4v5h5M3.6 9a8.5 8.5 0 1 1 .5 7",
+    page: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5",
+    resume: "M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16l-6-4zM9 10h6m-3-3 3 3-3 3",
+    start:
+      "M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0zM14.3 10a2.3 2.3 0 1 1-4.6 0 2.3 2.3 0 0 1 4.6 0",
+    clear:
+      "M3 6h18M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M5 6l1 14a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-14M10 10v7M14 10v7",
+  }
+
+  /** @param {string} name */
+  function createIcon(name) {
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    icon.setAttribute("viewBox", "0 0 24 24")
+    icon.setAttribute("aria-hidden", "true")
+    icon.setAttribute("focusable", "false")
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path")
+    path.setAttribute("d", iconPaths[name])
+    icon.append(path)
+    return icon
+  }
+
+  /** @param {string} action @param {string} label @param {string} [shortcut] */
+  function createButton(action, label, shortcut = "") {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.dataset.action = action
+    button.setAttribute("aria-label", label)
+    if (shortcut) button.dataset.shortcut = shortcut
+    button.append(createIcon(action))
+    return button
+  }
+
+  /** @param {...Node} elements */
+  function createGroup(...elements) {
+    const group = document.createElement("div")
+    group.className = "eh-reader-group"
+    group.append(...elements)
+    return group
+  }
+
+  function createDivider() {
+    const divider = document.createElement("span")
+    divider.className = "eh-reader-divider"
+    divider.setAttribute("aria-hidden", "true")
+    return divider
+  }
+
+  function createToolbar() {
+    const toolbar = document.createElement("div")
+    toolbar.id = toolbarId
+    toolbar.setAttribute("role", "group")
+    toolbar.setAttribute("aria-label", "E-Hentai Reader 閱讀控制")
+    toolbar.hidden = true
+    const controls = document.createElement("div")
+    controls.className = "eh-reader-controls"
+    const status = document.createElement("span")
+    status.id = "eh-reader-status"
+    status.className = "eh-reader-status"
+    status.setAttribute("role", "status")
+    const tooltip = document.createElement("div")
+    tooltip.id = "eh-reader-tooltip"
+    tooltip.className = "eh-reader-tooltip"
+    tooltip.setAttribute("role", "tooltip")
+    tooltip.hidden = true
+    const tooltipLabel = document.createElement("span")
+    const tooltipShortcut = document.createElement("kbd")
+    tooltip.append(tooltipLabel, tooltipShortcut)
+
+    toolbar.append(controls, tooltip)
+    document.body.append(toolbar, status)
+    /** @type {HTMLButtonElement | HTMLAnchorElement | null} */
+    let tooltipControl = null
+    let statusTimer = 0
+
+    /** @param {string} message @param {boolean} [transient] */
+    function showStatus(message, transient = false) {
+      clearTimeout(statusTimer)
+      status.textContent = message
+      if (transient)
+        statusTimer = window.setTimeout(() => {
+          status.textContent = ""
+        }, 2800)
+    }
+
+    function hideTooltip() {
+      tooltip.hidden = true
+      tooltipControl?.removeAttribute("aria-describedby")
+      tooltipControl = null
+    }
+
+    /** @param {HTMLButtonElement | HTMLAnchorElement} control */
+    function showTooltip(control) {
+      if (
+        !control.isConnected ||
+        control.closest("[hidden]") ||
+        (control instanceof HTMLButtonElement && control.disabled)
+      ) {
+        hideTooltip()
+        return
+      }
+      if (tooltipControl !== control) hideTooltip()
+      tooltipControl = control
+      const label = control.getAttribute("aria-label") ?? ""
+      if (tooltipLabel.textContent !== label) tooltipLabel.textContent = label
+      const shortcut = control.dataset.shortcut ?? ""
+      if (tooltipShortcut.textContent !== shortcut) tooltipShortcut.textContent = shortcut
+      tooltipShortcut.hidden = !shortcut
+      tooltip.hidden = false
+      control.setAttribute("aria-describedby", tooltip.id)
+      const rect = control.getBoundingClientRect()
+      const bounds = tooltip.getBoundingClientRect()
+      const height = document.documentElement.clientHeight || innerHeight
+      tooltip.style.left = `${Math.max(8, toolbar.getBoundingClientRect().left - bounds.width - 12)}px`
+      tooltip.style.top = `${Math.max(8, Math.min(height - bounds.height - 8, rect.top + (rect.height - bounds.height) / 2))}px`
+    }
+
+    /** @param {EventTarget | null} target */
+    function tooltipTarget(target) {
+      const control = target instanceof Element ? target.closest("button, a") : null
+      return control instanceof HTMLButtonElement || control instanceof HTMLAnchorElement
+        ? control
+        : null
+    }
+
+    function updateTooltip() {
+      if (tooltipControl) showTooltip(tooltipControl)
+    }
+
+    /** @param {Node} target */
+    function owns(target) {
+      return toolbar.contains(target) || status.contains(target)
+    }
+
+    const controller = new AbortController()
+    const signal = controller.signal
+    toolbar.addEventListener(
+      "pointerover",
+      (event) => {
+        const control = tooltipTarget(event.target)
+        if (control) showTooltip(control)
+      },
+      { signal },
+    )
+    toolbar.addEventListener(
+      "pointerout",
+      (event) => {
+        const control = tooltipTarget(event.target)
+        if (
+          !control ||
+          (event.relatedTarget instanceof Node && control.contains(event.relatedTarget))
+        )
+          return
+        if (!control.matches(":focus-visible")) hideTooltip()
+      },
+      { signal },
+    )
+    toolbar.addEventListener(
+      "focusin",
+      (event) => {
+        const control = tooltipTarget(event.target)
+        if (control) showTooltip(control)
+      },
+      { signal },
+    )
+    toolbar.addEventListener("focusout", hideTooltip, { signal })
+    controls.addEventListener(
+      "scroll",
+      () => {
+        if (
+          tooltipControl === document.activeElement &&
+          tooltipControl?.matches(":focus-visible")
+        ) {
+          const rect = tooltipControl.getBoundingClientRect()
+          const bounds = controls.getBoundingClientRect()
+          // Tab can scroll a focused control into view after its focus event.
+          if (rect.bottom > bounds.top && rect.top < bounds.bottom) {
+            showTooltip(tooltipControl)
+            return
+          }
+        }
+        hideTooltip()
+      },
+      { passive: true, signal },
+    )
+
+    window.addEventListener("resize", hideTooltip, { signal })
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key === "Escape") hideTooltip()
+      },
+      { signal },
+    )
+    const observer = new MutationObserver(() => {
+      if (
+        tooltipControl &&
+        (!tooltipControl.isConnected ||
+          tooltipControl.closest("[hidden]") ||
+          (tooltipControl instanceof HTMLButtonElement && tooltipControl.disabled))
+      )
+        hideTooltip()
+    })
+    observer.observe(toolbar, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ["hidden", "disabled"],
+    })
+
+    function destroy() {
+      clearTimeout(statusTimer)
+      controller.abort()
+      observer.disconnect()
+      hideTooltip()
+      toolbar.remove()
+      status.remove()
+    }
+
+    return { toolbar, controls, showStatus, hideTooltip, updateTooltip, owns, destroy }
+  }
+
   function startGalleryProgress() {
-    if (!document.querySelector('a[href*="/g/"], #gn')) return () => {}
+    if (
+      !/^\/g\/[1-9]\d*\/[a-z0-9]+\/?$/i.test(location.pathname) &&
+      !document.querySelector('a[href*="/g/"], #gn')
+    )
+      return () => {}
     const style = document.createElement("style")
     style.id = styleId
     style.textContent = `
       .eh-reader-progress { display: inline-block; margin: 4px 8px; white-space: nowrap;
         font: 13px/1.4 system-ui, sans-serif; }
-      #${toolbarId} { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647;
-        padding: 8px; border: 1px solid #666; border-radius: 8px; background: #202124; color: #f1f3f4;
-        font: 13px/1.4 system-ui, sans-serif; }
-      #${toolbarId}[hidden] { display: none; }
-      #${toolbarId} button { min-height: 32px; cursor: pointer; }
+      ${toolbarCss()}
     `
-    const panel = document.createElement("div")
-    panel.id = toolbarId
-    panel.hidden = true
-    const clear = document.createElement("button")
-    clear.type = "button"
-    clear.textContent = "清除閱讀紀錄"
-    const status = document.createElement("span")
-    status.setAttribute("role", "status")
-    panel.append(clear, status)
     document.head.append(style)
-    document.body.append(panel)
+    const { toolbar, controls, showStatus, hideTooltip, updateTooltip, owns, destroy } =
+      createToolbar()
+    const resume = document.createElement("a")
+    resume.dataset.action = "resume"
+    resume.setAttribute("aria-label", "繼續閱讀")
+    const pageBadge = document.createElement("span")
+    pageBadge.className = "eh-reader-page-badge"
+    pageBadge.setAttribute("aria-hidden", "true")
+    resume.append(createIcon("resume"), pageBadge)
+    const resumeGroup = document.createElement("div")
+    resumeGroup.className = "eh-reader-resume-group"
+    resumeGroup.hidden = true
+    resumeGroup.append(resume, createDivider())
+    const clear = createButton("clear", "清除閱讀紀錄")
+    controls.append(resumeGroup, clear)
     /** @type {Map<Element, HTMLAnchorElement>} */
     const badges = new Map()
     let frame = 0
 
     function refresh() {
+      const galleryId = location.pathname.match(/^\/g\/([1-9]\d*)\/[a-z0-9]+\/?$/i)?.[1]
+      const progress = galleryId ? readProgress(galleryId) : null
+      resume.hidden = resumeGroup.hidden = !progress
+      if (progress) {
+        resume.setAttribute("aria-label", `繼續閱讀：第 ${progress.page} 頁`)
+        const href = progress.path + resumeHash
+        if (resume.getAttribute("href") !== href) resume.setAttribute("href", href)
+        if (pageBadge.textContent !== String(progress.page))
+          pageBadge.textContent = String(progress.page)
+      } else {
+        resume.removeAttribute("href")
+        pageBadge.textContent = ""
+      }
       /** @type {Map<Element, string>} */
       const targets = new Map()
-      // Gallery URLs also occur in pagination, thumbnails, and navigation controls.
+      // Keep per-title list links, but put the current gallery's resume only in the toolbar.
       for (const title of document.querySelectorAll(".glink")) {
         const link = title.closest("a[href]")
         if (!(link instanceof HTMLAnchorElement) || !title.textContent?.trim()) continue
         const url = localUrl(link.getAttribute("href") ?? "")
         const match = url?.pathname.match(/^\/g\/([1-9]\d*)\/[a-z0-9]+\/?$/i)
-        if (match) targets.set(link, match[1])
+        if (match && match[1] !== galleryId) targets.set(link, match[1])
       }
-      const match = location.pathname.match(/^\/g\/([1-9]\d*)\/[a-z0-9]+\/?$/i)
-      const heading = document.getElementById("gn")
-      if (match && heading) targets.set(heading, match[1])
       for (const [target, badge] of badges) {
         if (!targets.has(target) || !readProgress(targets.get(target) ?? "")) {
           badge.remove()
@@ -186,9 +538,9 @@
         const href = progress.path + resumeHash
         if (badge.getAttribute("href") !== href) badge.setAttribute("href", href)
       }
-      panel.hidden = badges.size === 0 && !storageError
-      const text = storageError ? " 無法使用本機儲存。" : ""
-      if (status.textContent !== text) status.textContent = text
+      toolbar.hidden = !progress && badges.size === 0 && !storageError
+      if (storageError) showStatus("無法使用本機儲存。")
+      updateTooltip()
     }
 
     function schedule() {
@@ -203,14 +555,16 @@
     clear.addEventListener(
       "click",
       () => {
-        clearProgress()
+        hideTooltip()
+        if (clearProgress()) showStatus("已清除本站閱讀紀錄。", true)
         refresh()
       },
       { signal },
     )
     window.addEventListener("storage", schedule, { signal })
+    window.addEventListener("popstate", schedule, { signal })
     const observer = new MutationObserver((records) => {
-      if (records.some((record) => !panel.contains(record.target))) schedule()
+      if (records.some((record) => !owns(record.target))) schedule()
     })
     observer.observe(document.body, {
       childList: true,
@@ -224,7 +578,7 @@
       observer.disconnect()
       cancelAnimationFrame(frame)
       for (const badge of badges.values()) badge.remove()
-      panel.remove()
+      destroy()
       style.remove()
     }
   }
@@ -294,168 +648,15 @@
       max-height: none !important;
       margin: 0 !important;
     }
-    #${toolbarId} {
-      --ehr-edge: 24px;
-      position: fixed;
-      right: var(--ehr-edge);
-      bottom: var(--ehr-edge);
-      z-index: 2147483647;
-      width: 64px;
-      box-sizing: border-box;
-      padding: 9px;
-      border: 1px solid #484b52;
-      border-radius: 14px;
-      background: #25262a;
-      color: #e6e7ea;
-      box-shadow: 0 8px 32px #0005, 0 1px 3px #0006;
-      font: 13px/1.6 system-ui, sans-serif;
-      text-align: center;
-    }
-    #${toolbarId} * { box-sizing: border-box; }
-    #${toolbarId} .eh-reader-controls {
-      max-height: calc(100dvh - 2 * var(--ehr-edge) - 20px);
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      scrollbar-width: none;
-    }
-    #${toolbarId} .eh-reader-controls::-webkit-scrollbar { display: none; }
-    #${toolbarId} .eh-reader-group {
-      display: flex; flex-direction: column; align-items: center; gap: 2px;
-    }
-    #${toolbarId} .eh-reader-divider {
-      display: block; height: 1px; margin: 7px 6px; background: #ffffff13;
-    }
-    #${toolbarId} button, #${toolbarId} a {
-      appearance: none;
-      display: grid;
-      place-items: center;
-      width: 44px;
-      height: 44px;
-      flex: none;
-      margin: 0;
-      padding: 0;
-      border: 1px solid transparent;
-      border-radius: 8px;
-      background: transparent;
-      color: #c5c8d0;
-      box-shadow: none;
-      font: inherit;
-      text-decoration: none;
-      cursor: pointer;
-    }
-    #${toolbarId} button:hover:not(:disabled), #${toolbarId} a:hover {
-      background: #373940; color: #fff;
-    }
-    #${toolbarId} button[aria-pressed="true"] {
-      border-color: #a8c7fa26; background: #a8c7fa1c; color: #c1d8ff;
-    }
-    #${toolbarId} button:focus-visible, #${toolbarId} a:focus-visible {
-      outline: 2px solid #a8c7fa; outline-offset: -3px;
-    }
-    #${toolbarId} button:disabled { opacity: .3; cursor: default; }
-    #${toolbarId} [data-action="resume"] { color: #a8c7fa; }
-    #${toolbarId} [data-action="clear"] { color: #9da1ac; }
-    #${toolbarId} [data-action="clear"]:hover { background: #ed8e8e19; color: #f1a3a3; }
-    #${toolbarId} svg {
-      display: block; width: 20px; height: 20px; fill: none; stroke: currentColor;
-      stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
-    }
-    #${toolbarId} #eh-reader-position {
-      display: flex; justify-content: center; align-items: center; gap: 4px;
-      height: 30px; color: #b6bac5; font-size: 12px; font-variant-numeric: tabular-nums;
-    }
-    #${toolbarId} #eh-reader-position svg { width: 14px; height: 14px; }
-    #${toolbarId} output {
-      display: block; width: 44px; padding: 2px 0; color: #e8eaf0;
-      font-size: 11px; font-weight: 500; line-height: 20px; font-variant-numeric: tabular-nums;
-    }
-    #${toolbarId} .eh-reader-tooltip, #${toolbarId} .eh-reader-status {
-      position: fixed; width: max-content; padding: 8px 11px; border: 1px solid #4c4f58;
-      border-radius: 7px; background: #303239; color: #f1f3f7;
-      box-shadow: 0 4px 16px #0004; font-size: 12px; text-align: left;
-      overflow-wrap: anywhere;
-    }
-    #${toolbarId} .eh-reader-tooltip {
-      display: flex; align-items: center; gap: 16px;
-      max-width: calc(100vw - var(--ehr-edge) - 88px); pointer-events: none;
-    }
-    #${toolbarId} .eh-reader-tooltip kbd {
-      color: #b4b9c5; font: 11px/1.4 system-ui, sans-serif; white-space: nowrap;
-    }
-    #${toolbarId} .eh-reader-status {
-      right: calc(var(--ehr-edge) + 76px); bottom: calc(var(--ehr-edge) + 4px);
-      max-width: min(340px, calc(100vw - var(--ehr-edge) - 96px)); pointer-events: none;
-    }
-    #${toolbarId} .eh-reader-status:empty { display: none; }
-    @media (max-width: 900px) { #${toolbarId} { --ehr-edge: 18px; } }
-    @media (max-width: 520px) { #${toolbarId} { --ehr-edge: 12px; } }
-    #${toolbarId}[hidden], #${toolbarId} [hidden] { display: none; }
+    ${toolbarCss()}
   `
   const style = document.createElement("style")
   style.id = styleId
   style.textContent = css
   document.head.append(style)
 
-  /** @type {Record<string, string>} */
-  const iconPaths = {
-    in: "M12 5v14M5 12h14",
-    out: "M5 12h14",
-    width: "M4 4v16M20 4v16M8 12h8m-5-3-3 3 3 3m2-6 3 3-3 3",
-    height: "M4 4h16M4 20h16M12 8v8m-3-5 3-3 3 3m-6 2 3 3 3-3",
-    reset: "M3 4v5h5M3.6 9a8.5 8.5 0 1 1 .5 7",
-    page: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5",
-    resume: "M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16l-6-4zM9 10h6m-3-3 3 3-3 3",
-    start:
-      "M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0zM14.3 10a2.3 2.3 0 1 1-4.6 0 2.3 2.3 0 0 1 4.6 0",
-    clear:
-      "M3 6h18M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M5 6l1 14a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-14M10 10v7M14 10v7",
-  }
-
-  /** @param {string} name */
-  function createIcon(name) {
-    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg")
-    icon.setAttribute("viewBox", "0 0 24 24")
-    icon.setAttribute("aria-hidden", "true")
-    icon.setAttribute("focusable", "false")
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path")
-    path.setAttribute("d", iconPaths[name])
-    icon.append(path)
-    return icon
-  }
-
-  /** @param {string} action @param {string} label @param {string} [shortcut] */
-  function createButton(action, label, shortcut = "") {
-    const button = document.createElement("button")
-    button.type = "button"
-    button.dataset.action = action
-    button.setAttribute("aria-label", label)
-    if (shortcut) button.dataset.shortcut = shortcut
-    button.append(createIcon(action))
-    return button
-  }
-
-  /** @param {...Node} elements */
-  function createGroup(...elements) {
-    const group = document.createElement("div")
-    group.className = "eh-reader-group"
-    group.append(...elements)
-    return group
-  }
-
-  function createDivider() {
-    const divider = document.createElement("span")
-    divider.className = "eh-reader-divider"
-    divider.setAttribute("aria-hidden", "true")
-    return divider
-  }
-
-  const toolbar = document.createElement("div")
-  toolbar.id = toolbarId
-  toolbar.setAttribute("role", "group")
-  toolbar.setAttribute("aria-label", "E-Hentai Reader 閱讀控制")
-  toolbar.hidden = true
-  const controls = document.createElement("div")
-  controls.className = "eh-reader-controls"
+  const { toolbar, controls, showStatus, hideTooltip, updateTooltip, owns, destroy } =
+    createToolbar()
   const position = document.createElement("span")
   position.id = "eh-reader-position"
   position.setAttribute("role", "img")
@@ -484,17 +685,6 @@
   resumeGroup.className = "eh-reader-resume-group"
   resumeGroup.append(createDivider(), createGroup(resume, startHere))
   const clear = createButton("clear", "清除閱讀紀錄")
-  const status = document.createElement("span")
-  status.className = "eh-reader-status"
-  status.setAttribute("role", "status")
-  const tooltip = document.createElement("div")
-  tooltip.id = "eh-reader-tooltip"
-  tooltip.className = "eh-reader-tooltip"
-  tooltip.setAttribute("role", "tooltip")
-  tooltip.hidden = true
-  const tooltipLabel = document.createElement("span")
-  const tooltipShortcut = document.createElement("kbd")
-  tooltip.append(tooltipLabel, tooltipShortcut)
   controls.append(
     position,
     createDivider(),
@@ -505,57 +695,6 @@
     createDivider(),
     clear,
   )
-  toolbar.append(controls, tooltip, status)
-  document.body.append(toolbar)
-  /** @type {HTMLButtonElement | HTMLAnchorElement | null} */
-  let tooltipControl = null
-  let statusTimer = 0
-
-  /** @param {string} message @param {boolean} [transient] */
-  function showStatus(message, transient = false) {
-    clearTimeout(statusTimer)
-    status.textContent = message
-    if (transient)
-      statusTimer = window.setTimeout(() => {
-        status.textContent = ""
-      }, 2800)
-  }
-
-  function hideTooltip() {
-    tooltip.hidden = true
-    tooltipControl?.removeAttribute("aria-describedby")
-    tooltipControl = null
-  }
-
-  /** @param {HTMLButtonElement | HTMLAnchorElement} control */
-  function showTooltip(control) {
-    if (control.closest("[hidden]") || (control instanceof HTMLButtonElement && control.disabled)) {
-      hideTooltip()
-      return
-    }
-    if (tooltipControl !== control) hideTooltip()
-    tooltipControl = control
-    const label = control.getAttribute("aria-label") ?? ""
-    if (tooltipLabel.textContent !== label) tooltipLabel.textContent = label
-    const shortcut = control.dataset.shortcut ?? ""
-    if (tooltipShortcut.textContent !== shortcut) tooltipShortcut.textContent = shortcut
-    tooltipShortcut.hidden = !shortcut
-    tooltip.hidden = false
-    control.setAttribute("aria-describedby", tooltip.id)
-    const rect = control.getBoundingClientRect()
-    const bounds = tooltip.getBoundingClientRect()
-    const height = document.documentElement.clientHeight || innerHeight
-    tooltip.style.left = `${Math.max(8, toolbar.getBoundingClientRect().left - bounds.width - 12)}px`
-    tooltip.style.top = `${Math.max(8, Math.min(height - bounds.height - 8, rect.top + (rect.height - bounds.height) / 2))}px`
-  }
-
-  /** @param {EventTarget | null} target */
-  function tooltipTarget(target) {
-    const control = target instanceof Element ? target.closest("button, a") : null
-    return control instanceof HTMLButtonElement || control instanceof HTMLAnchorElement
-      ? control
-      : null
-  }
 
   function view() {
     const pane = mpv ? document.getElementById("pane_images") : null
@@ -689,7 +828,7 @@
       if (resume.getAttribute("href") !== href) resume.setAttribute("href", href)
     }
     if (storageError) showStatus("無法使用本機儲存；變更不會保存。")
-    if (tooltipControl) showTooltip(tooltipControl)
+    updateTooltip()
   }
 
   function refresh() {
@@ -831,7 +970,6 @@
 
   /** @param {KeyboardEvent} event */
   function onKeyDown(event) {
-    if (event.key === "Escape") hideTooltip()
     if (
       event.ctrlKey ||
       event.metaKey ||
@@ -1064,14 +1202,7 @@
   )
   window.addEventListener("wheel", onWheel, { capture: true, passive: false, signal })
   window.addEventListener("keydown", onKeyDown, { capture: true, signal })
-  window.addEventListener(
-    "resize",
-    () => {
-      hideTooltip()
-      scheduleRefresh()
-    },
-    { signal },
-  )
+  window.addEventListener("resize", scheduleRefresh, { signal })
   window.addEventListener("popstate", scheduleRefresh, { signal })
   document.addEventListener("load", scheduleRefresh, { capture: true, signal })
   document.addEventListener(
@@ -1081,52 +1212,6 @@
       scheduleProgress()
     },
     { capture: true, passive: true, signal },
-  )
-  toolbar.addEventListener(
-    "pointerover",
-    (event) => {
-      const control = tooltipTarget(event.target)
-      if (control) showTooltip(control)
-    },
-    { signal },
-  )
-  toolbar.addEventListener(
-    "pointerout",
-    (event) => {
-      const control = tooltipTarget(event.target)
-      if (
-        !control ||
-        (event.relatedTarget instanceof Node && control.contains(event.relatedTarget))
-      )
-        return
-      if (!control.matches(":focus-visible")) hideTooltip()
-    },
-    { signal },
-  )
-  toolbar.addEventListener(
-    "focusin",
-    (event) => {
-      const control = tooltipTarget(event.target)
-      if (control) showTooltip(control)
-    },
-    { signal },
-  )
-  toolbar.addEventListener("focusout", hideTooltip, { signal })
-  controls.addEventListener(
-    "scroll",
-    () => {
-      if (tooltipControl === document.activeElement && tooltipControl?.matches(":focus-visible")) {
-        const rect = tooltipControl.getBoundingClientRect()
-        const bounds = controls.getBoundingClientRect()
-        // Tab can scroll a focused control into view after its focus event.
-        if (rect.bottom > bounds.top && rect.top < bounds.bottom) {
-          showTooltip(tooltipControl)
-          return
-        }
-      }
-      hideTooltip()
-    },
-    { passive: true, signal },
   )
   toolbar.addEventListener(
     "click",
@@ -1147,25 +1232,13 @@
     { signal },
   )
   const observer = new MutationObserver((records) => {
-    if (
-      tooltipControl &&
-      (tooltipControl.closest("[hidden]") ||
-        (tooltipControl instanceof HTMLButtonElement && tooltipControl.disabled))
-    ) {
-      hideTooltip()
-    }
-    if (records.some((record) => !toolbar.contains(record.target))) scheduleRefresh()
+    if (records.some((record) => !owns(record.target))) scheduleRefresh()
   })
   observer.observe(document.body, {
     childList: true,
     subtree: true,
     attributes: true,
     attributeFilter: ["style", "src", "width", "height"],
-  })
-  observer.observe(toolbar, {
-    attributes: true,
-    subtree: true,
-    attributeFilter: ["hidden", "disabled"],
   })
   refresh()
 
@@ -1174,13 +1247,11 @@
     saveProgress()
     stopped = true
     clearTimeout(progressTimer)
-    clearTimeout(statusTimer)
     controller.abort()
     observer.disconnect()
     cancelAnimationFrame(frame)
     document.documentElement.classList.remove(activeClass)
-    hideTooltip()
-    toolbar.remove()
+    destroy()
     style.remove()
     pages.clear()
   }

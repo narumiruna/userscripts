@@ -1,8 +1,8 @@
 # E-Hentai Reader
 
-Zoom reader images, save view settings, and resume from a locally saved reading position. Gallery lists and gallery pages show a resume link when a saved position is available.
+Zoom reader images, save view settings, and resume from a locally saved reading position. Gallery pages combine resume and clear-history icons in one toolbar. Gallery lists keep a resume link beside each saved title.
 
-[Source](e-hentai-reader.user.js) · [Toolbar design preview](toolbar-preview.html) · [Shared installation instructions](../../README.md#install).
+[Source](e-hentai-reader.user.js) · [Reader toolbar preview](toolbar-preview.html) · [Gallery toolbar preview](gallery-toolbar-preview.html) · [Shared installation instructions](../../README.md#install).
 
 ## Setup
 
@@ -10,30 +10,32 @@ Zoom reader images, save view settings, and resume from a locally saved reading 
 2. Reload an E-Hentai or ExHentai page.
 3. On a reader page, move the pointer over an image and hold **Ctrl** while turning the wheel.
 
-The script matches HTTPS pages on `e-hentai.org` and `exhentai.org`. Zoom controls operate only on `/s/*` single-image readers and `/mpv/*` Multi-Page Viewers (MPV). Other pages can show progress beside same-site gallery title links or the gallery heading. Embedded frames are not supported.
+The script matches HTTPS pages on `e-hentai.org` and `exhentai.org`. Zoom controls operate only on `/s/*` single-image readers and `/mpv/*` Multi-Page Viewers (MPV). Gallery lists show progress beside same-site gallery title links. Gallery pages put their saved resume link in the lower-right toolbar. Embedded frames are not supported.
 
 Site access and MPV must already be available to the account. The script does not unlock them. Use the local source until the update is published on `main`; installation and update URLs do not publish local changes.
 
 ## Controls
 
-The reader toolbar is a 64 px wide vertical column at the lower-right corner. Each icon control is 44 × 44 px. The page number and scale remain numeric. Gallery pages keep their text controls.
+The toolbar is a 64 px wide vertical column at the lower-right corner. Each icon control is 44 × 44 px. Reader page numbers and scale remain numeric.
 
-| Control                                     | Result                                                                                  |
-| ------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Ctrl + wheel up/down over an image          | Increase/decrease image size around the pointer.                                        |
-| Plus / minus icons or `+` / `=` / `-`       | Multiply/divide image size by 1.1 around the reading-area center.                       |
-| Horizontal-arrow icon / Shift + W           | Fit each page to the reading-area width. Show the start of the current page.            |
-| Vertical-arrow icon / Shift + H             | Fit each page to the reading-area height. Leave space for the controls.                 |
-| Counterclockwise-arrow icon / `0`           | Restore the site's image dimensions and save native size as the view preference.        |
-| Bookmark-and-arrow icon                     | Resume the saved page and relative vertical position.                                   |
-| Location-pin icon                           | Replace the pending saved position with the current position, without a jump.           |
-| Trash-can icon / gallery clear-history text | After confirmation, remove this site's saved reading history. Keep the view preference. |
+Gallery pages use the same icon style. A bookmark-and-arrow link with a saved-page badge appears above the trash-can control. It replaces the resume text beside the gallery heading. Gallery lists keep their per-title text links; their floating toolbar contains only the trash-can control.
+
+| Control                               | Result                                                                                  |
+| ------------------------------------- | --------------------------------------------------------------------------------------- |
+| Ctrl + wheel up/down over an image    | Increase/decrease image size around the pointer.                                        |
+| Plus / minus icons or `+` / `=` / `-` | Multiply/divide image size by 1.1 around the reading-area center.                       |
+| Horizontal-arrow icon / Shift + W     | Fit each page to the reading-area width. Show the start of the current page.            |
+| Vertical-arrow icon / Shift + H       | Fit each page to the reading-area height. Leave space for the controls.                 |
+| Counterclockwise-arrow icon / `0`     | Restore the site's image dimensions and save native size as the view preference.        |
+| Bookmark-and-arrow icon               | Resume the saved page and relative vertical position.                                   |
+| Location-pin icon                     | Replace the pending saved position with the current position, without a jump.           |
+| Trash-can icon                        | After confirmation, remove this site's saved reading history. Keep the view preference. |
 
 - Hover over an icon or focus it with Tab to show its name and shortcut on the left. Press Escape to close the tooltip.
-- Resume and start-here icons appear only while resume is pending. The resume tooltip includes the saved page number.
+- On reader pages, resume and start-here icons appear only while resume is pending. On gallery pages, the resume icon appears when that gallery has a valid saved position. The resume tooltip includes the saved page number.
 - On short viewports, scroll inside the toolbar or use Tab to reach its controls. Tooltips remain outside the scroll area.
 - Storage errors and clear-history notices appear to the left without changing the toolbar width.
-  - Clear-history notices close after 2.8 seconds. Storage errors remain visible.
+  - Clear-history notices close after 2.8 seconds and remain visible if the gallery toolbar closes. Storage errors remain visible.
 - Icons use inline SVG. They do not require external fonts or image requests.
 
 Manual scaling uses a common factor for all MPV pages. Fit modes calculate a separate factor for each page. The scale range is 10–800%; images outside this range cannot fit exactly.
@@ -52,7 +54,7 @@ The script preserves native page navigation, including arrow keys, Space, and un
 - A single-image reader can navigate to the saved reader path. MPV can resume the saved page within its current viewer, even when the record came from a single-image reader.
 - MPV first scrolls to an unloaded target to let the native viewer load it. It applies the saved offset again after the image becomes available. A missing or failed target leaves the saved record unchanged; starting elsewhere cancels the pending restoration.
 - Native same-tab single-image links use a one-use `sessionStorage` handoff. It is bound to the destination path and is consumed on arrival, including same-document navigation. A later reload offers resume normally.
-- A progress update from another tab pauses local writes and offers the newer position without moving the current page. New local reading input can replace that position. Gallery badges update when storage changes.
+- A progress update from another tab pauses local writes and offers the newer position without moving the current page. New local reading input can replace that position. Gallery links and saved-page badges update when storage changes.
 - Clear history cancels pending writes. Passive layout updates and page exit do not recreate the cleared record. New reading input can start a new record.
 
 Relative position is measured from the reading area's top edge within the current image. Horizontal scroll position is not saved. Restoration is limited by the available scroll range. Changes to image dimensions or site navigation can affect the final position.
@@ -73,7 +75,9 @@ Scaling is relative to the site's current dimensions, not necessarily the origin
 - MPV keeps its vertical scrollbar hidden. Ordinary wheel input and keyboard navigation still scroll vertically. Oversized images have a horizontal scrollbar. Single-image readers keep their native document scrollbars.
 - The script does not add a continuous reader, request higher-resolution files, increase image quality, or bypass access limits. Other reader scripts can conflict with its layout rules.
 - Gallery indicators show only saved records on the current origin. They do not fetch gallery metadata or calculate a completion percentage.
-  - Resume links appear beside native `.glink` gallery title links and the `#gn` gallery heading. Each title gets at most one link, and its label stays on one line.
+  - On lists, each native `.glink` gallery title gets at most one single-line resume link.
+  - On a `/g/*` gallery page, the current gallery's resume link appears only in the toolbar, not beside `#gn` or another link to the same gallery. The URL identifies the gallery even if its title is absent.
+  - The icon badge shows the saved page. Long numbers are clipped to the badge width; the tooltip and accessible label retain the full number.
   - Pagination, thumbnail links, and other navigation links remain unchanged.
 - Invalid storage records are ignored. If storage is blocked or full, zoom still works and the toolbar reports that changes cannot be saved. History has no automatic expiry; clear it when it is no longer needed.
 - The script requires a current browser with MutationObserver, requestAnimationFrame, localStorage, sessionStorage, and abortable event listeners. Site markup and native navigation can change.
@@ -92,6 +96,14 @@ To remove page changes, disable the script and reload. Saved data remains until 
 Each native reader still loads images under its normal rules. Smaller images can put more pages in view. Explicit resume and normal navigation can cause the site to load the selected page and nearby images.
 
 ## Validation
+
+### Version 0.4.0
+
+Version 0.4.0 passed `npm run ci`: formatting, lint, JavaScript type checks, and all 765 Vitest/jsdom tests, including 223 reader tests. Full CI used a separate LF worktree to preserve the existing CRLF Windows checkout.
+
+Headless Chrome 156.0.8078.80 checked the exact source with neutral intercepted fixtures on both site origins. Gallery checks at 1440 × 960, 390 × 844, and 320 × 480 px covered saved pages 1 and 128, control sizes, tooltip bounds, Tab/Escape, unchanged heading/pagination/thumbnail DOM and dimensions, galleries without title markers, real cross-tab updates, native resume navigation, reader restoration, list links, clear confirmation/cancellation, retained preferences, notice expiry, observer stability, and cleanup. A 320 × 568 px case checked readable storage failures. No page errors or external asset requests occurred in the gallery checks.
+
+The existing single-image and native MPV browser checks also passed on both origins, including zoom, fit states, physical Ctrl + wheel, native wheel/D navigation, resume, short-height keyboard access, and cleanup. These checks used fixtures, not live galleries or userscript-manager injection.
 
 ### Version 0.3.0
 

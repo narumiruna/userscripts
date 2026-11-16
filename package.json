@@ -15,7 +15,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.5",
+    "@biomejs/biome": "^2.6.7",
     "husky": "^9.1.7",
     "jsdom": "^31.0.0",
     "typescript": "^7.0.2",

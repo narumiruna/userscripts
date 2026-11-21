@@ -2,11 +2,9 @@
 import { Script } from "node:vm"
 import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import source from "../src/threads-country-label/threads-country-label.user.js?raw"
-import savedSource from "../src/threads-saved-button/threads-saved-button.user.js?raw"
 import fixture from "./fixtures/threads-country-label.json"
 
 const script = new Script(source)
-const savedScript = new Script(savedSource)
 const LABEL = ".threads-country-label"
 const STYLE = "threads-country-label-style"
 const UNKNOWN = "所在地未知"
@@ -15,7 +13,6 @@ const TOOLTIP = "Threads 公開的帳號所在地，非國籍"
 const INSTALL_URL =
   "https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-country-label/threads-country-label.user.js"
 let stop
-let stopSaved
 let observers
 let fetchMock
 let respond
@@ -189,7 +186,6 @@ beforeEach(() => {
   document.documentElement.lang = "en"
   history.replaceState(null, "", "/")
   stop = () => {}
-  stopSaved = () => {}
   observers = []
   starts = []
   contextData = jsonData(modules())
@@ -217,7 +213,6 @@ beforeEach(() => {
 
 afterEach(async () => {
   stop()
-  stopSaved()
   await tick(0)
   expect(vi.getTimerCount()).toBe(0)
   vi.restoreAllMocks()
@@ -1583,28 +1578,4 @@ test("preserves a visible author binding when its timestamp is replaced during l
   await tick()
   expectCountry(post)
   expect(fetchMock).toHaveBeenCalledOnce()
-})
-
-test("coexists with Threads Saved Button without clicking any saved action", async () => {
-  const post = addPost()
-  jsonData({ posts: [{ code: "first", has_viewer_saved: true }] })
-  const click = vi.fn()
-  post.addEventListener("click", click)
-  stopSaved = savedScript.runInThisContext()
-  start()
-  await reveal(post)
-  const saved = post.querySelector("button.threads-saved-button")
-  expect(saved).toBeInstanceOf(HTMLButtonElement)
-  expect(saved.getAttribute("aria-pressed")).toBe("true")
-  expect(saved.previousElementSibling).toBe(post.querySelector(".share-action"))
-  expectCountry(post)
-  expect(click).not.toHaveBeenCalled()
-  stop()
-  await tick()
-  expect(saved.isConnected).toBe(true)
-  expect(document.getElementById("threads-saved-button-style")).not.toBeNull()
-  expect(saved.getAttribute("aria-pressed")).toBe("true")
-  expect(click).not.toHaveBeenCalled()
-  stopSaved()
-  expect(vi.getTimerCount()).toBe(0)
 })

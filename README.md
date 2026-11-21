@@ -6,14 +6,12 @@ Browser userscripts for Threads, Reddit, PTT, YouTube, E-Hentai, and ExHentai. E
 
 | Script                                                       | Purpose                                                    | Install                            |
 | ------------------------------------------------------------ | ---------------------------------------------------------- | ---------------------------------- |
-| [Threads Saved Button](src/threads-saved-button/README.md)   | Add a save/unsave button after Share on Threads posts.     | [Install][threads-install]         |
 | [Threads Country Label](src/threads-country-label/README.md) | Show public account locations beside Threads authors.      | [Install][threads-country-install] |
 | [Reddit Saved Button](src/reddit-saved-button/README.md)     | Add a save/unsave button after Share on Reddit posts.      | [Install][reddit-install]          |
 | [PTT Auto Media](src/ptt-auto-media/README.md)               | Display linked images and videos inline in PTT articles.   | [Install][ptt-install]             |
 | [YouTube Live Rewind](src/youtube-live-rewind/README.md)     | Enable the native DVR timeline for supported live streams. | [Install][youtube-install]         |
 | [E-Hentai Reader](src/e-hentai-reader/README.md)             | Zoom images, save view settings, and resume reading.       | [Install][eh-reader-install]       |
 
-[threads-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-saved-button/threads-saved-button.user.js
 [threads-country-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/threads-country-label/threads-country-label.user.js
 [reddit-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/reddit-saved-button/reddit-saved-button.user.js
 [ptt-install]: https://raw.githubusercontent.com/narumiruna/userscripts/main/src/ptt-auto-media/ptt-auto-media.user.js
